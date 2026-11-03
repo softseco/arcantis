@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "rootDir": ".", "types": ["node"], "lib": ["ES2022", "DOM"] },
+  "include": ["src/**/*", "examples/**/*", "test/_helpers.ts", "test/browser/**/*"],
+  // The Vite example has its own package.json and typecheck (cd examples/vite && npm run typecheck).
+  "exclude": ["examples/vite"]
+}

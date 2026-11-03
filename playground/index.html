@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Playground — Softseco</title>
+<meta name="description" content="Run a confidential token on Solana devnet in your browser. Arcantis keeps the amounts encrypted, Vigilantis enforces the issuer's rules, and an auditor can still read every transfer.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Softseco">
+<meta property="og:title" content="Playground — Softseco">
+<meta property="og:description" content="A confidential token on Solana devnet, in your browser: encrypted amounts with Arcantis, the issuer's rules with Vigilantis, and an auditor who can still read every transfer.">
+<meta property="og:url" content="https://softseco.github.io/arcantis/">
+<meta property="og:image" content="https://softseco.github.io/arcantis/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Softseco playground: Private amounts. Public rules.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#1315FF">
+<link rel="icon" type="image/svg+xml" href="softseco-mark.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400..800&family=Red+Hat+Text:wght@400..600&family=Red+Hat+Mono:wght@400..500&display=swap">
+<link rel="stylesheet" href="site.css">
+<style>
+  /* The playground's own styles, on top of softseco.com's (site.css): the steps, the wallets card and the outputs. */
+  :root { --stop: #C4161C; --stop-soft: #FDEDEE; --done: #00A86B; }
+  [hidden] { display: none !important; }
+  .pg-playground code { font-family: var(--mono); font-size: .88em; background: var(--mist); padding: 1px 6px; border-radius: 6px; }
+  .pg-playground pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; color: inherit; }
+  .pg-playground .sec-head .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .pg-playground .pill .v { font-family: var(--mono); font-weight: 500; }
+  #ready { display: inline-flex; align-items: center; gap: 10px; margin-top: 4px; font-family: var(--mono); font-size: 13px; color: var(--grey); }
+  #ready::before { content: ""; width: 7px; height: 7px; background: var(--blue); animation: tag-blink 1.6s steps(2, end) infinite; }
+  #ready.err { color: var(--stop); }
+  #ready.err::before { background: var(--stop); animation: none; }
+
+  .pg-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 40px; align-items: start; }
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .chapter { padding: 56px 0 10px; display: grid; gap: 12px; }
+  .chapter:first-child { padding-top: 0; }
+  .chapter h2 { font-size: clamp(30px, 3.2vw, 44px); letter-spacing: -.03em; line-height: 1.04; }
+  .chapter p { color: var(--grey); max-width: 60ch; }
+
+  .step { background: var(--mist); border-radius: 24px; padding: 28px 30px 30px; transition: background .35s var(--ease), box-shadow .35s var(--ease), opacity .35s var(--ease); }
+  .step[data-state="locked"] { opacity: .45; }
+  .step[data-state="ready"] { background: var(--paper); box-shadow: inset 0 0 0 1.5px var(--blue), 0 24px 48px rgba(19, 21, 255, .08); }
+  .step .head { display: flex; align-items: center; gap: 16px; }
+  .step .head .num { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 50%; background: var(--paper); font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--grey); }
+  .step[data-state="ready"] .head .num { background: var(--blue); color: #fff; }
+  .step[data-state="done"] .head .num { background: var(--done); color: #fff; }
+  .step h3 { font-size: 21px; letter-spacing: -.015em; line-height: 1.2; }
+  .step .pill.live { margin-left: auto; display: none; }
+  .step[data-state="done"] .pill.live { display: inline-flex; }
+  .step .lead { margin: 12px 0 20px 52px; font-size: 16px; color: var(--grey); max-width: 62ch; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-left: 52px; }
+  .btn:disabled { opacity: .3; cursor: default; pointer-events: none; }
+  .field { display: flex; align-items: center; gap: 8px; height: 50px; padding: 0 20px; border-radius: 99px; background: var(--paper); box-shadow: inset 0 0 0 1.5px var(--line); }
+  .field:focus-within { box-shadow: inset 0 0 0 1.5px var(--blue); }
+  .field input { border: 0; background: transparent; font: 600 16px var(--mono); width: 92px; outline: none; color: var(--ink); }
+  .field span { color: var(--grey); font-size: 14.5px; white-space: nowrap; }
+  .status { margin: 14px 0 0 52px; font-family: var(--mono); font-size: 13px; line-height: 1.55; color: var(--grey); min-height: 1em; overflow-wrap: anywhere; }
+  .status:empty { display: none; }
+  .status.ok { color: var(--blue); }
+  .status.err { color: var(--stop); }
+  .out { margin: 18px 0 0 52px; display: flex; flex-direction: column; }
+  .out:empty { display: none; }
+  .out > * { min-width: 0; }
+  .kv { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  .kv:first-child { border-top: 0; padding-top: 0; }
+  .kv > span { font-family: var(--mono); font-size: 12px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); min-width: 150px; }
+  .kv b { font-family: var(--display); font-weight: 600; font-size: 17px; }
+  .kv em { font-style: normal; color: var(--grey); font-size: 14px; }
+  .kv a, .links a, .who a { color: var(--blue); font-family: var(--mono); font-size: 13.5px; }
+  .kv a:hover, .links a:hover, .who a:hover { text-decoration: underline; }
+  .note { margin: 12px 0 0; color: var(--grey); font-size: 15px; }
+  .note.done { color: var(--ink); font-family: var(--display); font-weight: 600; font-size: 18px; letter-spacing: -.01em; }
+  .links { margin: 10px 0 0; padding-left: 18px; }
+  .who { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; padding: 14px 18px; border-radius: 16px; font-size: 15px; margin-top: 6px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); }
+  .who:first-child { margin-top: 0; }
+  .who b { font-family: var(--display); font-weight: 600; min-width: 118px; }
+  .who.ok { background: var(--blue-soft); box-shadow: none; }
+  .who.no { color: var(--grey); }
+  .who.stop { background: var(--stop-soft); box-shadow: none; }
+  .who.stop b { color: var(--stop); }
+  .who code.log { flex-basis: 100%; display: block; font-size: 12px; white-space: normal; overflow-wrap: anywhere; background: rgba(255, 255, 255, .8); padding: 7px 11px; border-radius: 8px; }
+  .table-wrap { overflow-x: auto; }
+  .report { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .report th { text-align: left; font-family: var(--mono); font-size: 11.5px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); padding: 0 14px 10px 0; border-bottom: 1px solid var(--ink); white-space: nowrap; }
+  .report td { padding: 11px 14px 11px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .report td:first-child, .report td:nth-child(2), .report td:last-child { font-family: var(--mono); font-size: 13px; }
+  .report .num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--display); font-weight: 600; }
+  .out .controls { margin: 18px 0 0; }
+  details.code { margin: 18px 0 0 52px; }
+  details.code summary { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); list-style: none; }
+  details.code summary::-webkit-details-marker { display: none; }
+  details.code summary::before { content: "+"; color: var(--blue); font-size: 15px; }
+  details.code[open] summary::before { content: "–"; }
+  details.code pre { margin: 12px 0 0; padding: 18px 20px; background: var(--night); color: #E6E7F0; border-radius: 16px; overflow-x: auto; font: 13px/1.65 var(--mono); }
+  details.code pre .c { color: var(--grey-2); }
+
+  .side { position: sticky; top: calc(var(--hdr) + 24px); display: grid; gap: 14px; }
+  .side .kc { padding: 28px 26px 28px; }
+  .side .kc:hover { transform: none; }
+  .side h3 { font-size: 20px; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  .row > span { color: var(--grey); }
+  .row > span small { display: block; font-size: 12.5px; color: var(--grey-2); }
+  .row a, .row b { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--ink); }
+  .row a:hover { color: var(--blue); }
+  .bal { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 15px; }
+  .bal th { text-align: right; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); padding: 8px 0; border-bottom: 1px solid var(--ink); }
+  .bal th:first-child, .bal td:first-child { text-align: left; }
+  .bal td { text-align: right; padding: 10px 0; border-bottom: 1px solid var(--line); font-family: var(--display); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bal td:first-child { font-family: var(--text); font-weight: 500; color: var(--grey); }
+  .side .btn { width: 100%; margin-top: 18px; }
+  .fine { font-size: 13px; color: var(--grey); margin: 12px 0 0; }
+  .linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--blue); text-decoration: underline; cursor: pointer; }
+  .linkbtn:disabled { opacity: .4; cursor: default; }
+  .side .dark { background: var(--night); color: #fff; }
+  .side .dark .eyebrow { color: var(--blue-on-dark); }
+  .side .dark p { color: rgba(255, 255, 255, .66); font-size: 15px; }
+  .side .dark pre { margin: 4px 0 0; padding: 14px 16px; background: var(--night-2); border-radius: 12px; font: 12.5px/1.6 var(--mono); color: #fff; overflow-x: auto; }
+  .side .dark a { color: #fff; font-weight: 600; text-decoration: underline; }
+
+  #finale { margin-top: 14px; background: var(--blue); color: #fff; border-radius: 24px; padding: clamp(32px, 4vw, 48px); display: grid; gap: 14px; justify-items: start; }
+  #finale .eyebrow { color: #fff; opacity: .75; }
+  #finale h2 { font-size: clamp(30px, 3.4vw, 46px); letter-spacing: -.03em; line-height: 1.04; }
+  #finale p { color: rgba(255, 255, 255, .78); max-width: 60ch; }
+
+  /* the headline is one sentence a line, and stays clear of the blocks in the picture */
+  @media (min-width: 761px) {
+    .pg-playground .ph h1 { font-size: clamp(44px, 5vw, 76px); }
+    .pg-playground .ph h1 .l { display: block; }
+  }
+  @media (max-width: 1100px) {
+    .pg-grid { grid-template-columns: minmax(0, 1fr); }
+    .side { position: static; }
+  }
+  @media (max-width: 760px) {
+    .step { padding: 22px 20px 24px; border-radius: 20px; }
+    .step .head { gap: 12px; }
+    .step .head .num { width: 32px; height: 32px; font-size: 13px; }
+    .step h3 { font-size: 19px; }
+    .step .lead, .controls, .status, .out, details.code { margin-left: 0; }
+    .controls .btn { flex: 1 1 auto; }
+    .field { flex: 1 1 160px; }
+    .kv > span { min-width: 112px; }
+    .who b { min-width: 96px; }
+    .chapter { padding-top: 44px; }
+  }
+</style>
+</head>
+<body class="kit pg-playground">
+<!-- site:defs -->
+<!-- site:header -->
+
+<div class="page-body">
+<main id="main">
+  <section class="ph on-blue" data-bar="light" data-tone="light" style="--pos:50% 50%;--mpos:50% 50%">
+    <picture><source media="(max-width:760px)" srcset="assets/hero-m.jpg"><img src="assets/hero.jpg" alt="A white token with the Softseco mark, partly behind frosted glass, and ten cubes stepping up to it, on a blue background"></picture>
+    <div class="copy">
+      <span class="tag">Live on Solana devnet</span>
+      <h1><span class="l">Private amounts.</span> <span class="l">Public rules.</span></h1>
+      <p>Run a confidential token from start to finish, in this page. Arcantis keeps every amount encrypted, Vigilantis enforces the issuer's rules on every transfer, and an auditor can still read it all.</p>
+      <div class="acts"><a class="btn btn-white" href="#run">Start</a><a class="btn btn-line" href="https://github.com/softseco/arcantis/tree/main/playground" target="_blank" rel="noopener">Read the code</a></div>
+    </div>
+  </section>
+
+  <section class="sec" id="run">
+    <div class="wrap">
+      <div class="sec-head rv">
+        <h2>Ten steps, one token.</h2>
+        <p class="lead">Every step is a real devnet transaction. The page makes throwaway keys and keeps them in this browser: nothing to install, no wallet extension. Devnet SOL is free, and the test tokens have no value.</p>
+        <div class="pills">
+          <span class="pill live">Arcantis <span class="v">1.0.0-rc.1</span></span>
+          <span class="pill live">Vigilantis <span class="v" id="hook-version">1.0.0-rc.1</span></span>
+          <span class="pill">RPC <span class="v" id="rpc">api.devnet.solana.com</span></span>
+        </div>
+        <div id="ready">Loading the zero-knowledge module…</div>
+      </div>
+
+      <div class="pg-grid">
+        <ol class="steps">
+          <li class="chapter">
+            <div class="eyebrow">01 · Arcantis</div>
+            <h2>Private amounts</h2>
+            <p>A Token-2022 dollar whose balances and transfer amounts are encrypted on-chain. Zero-knowledge proofs show each transfer is valid without revealing it.</p>
+          </li>
+
+          <li class="step" data-step="1" data-state="ready">
+            <div class="head"><span class="num">1</span><h3>Get devnet SOL</h3><span class="pill live">Done</span></div>
+            <p class="lead">Your throwaway wallet pays the fees and rent for everyone in this run, about 0.05 SOL.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="1" disabled>Airdrop 1 SOL</button><button class="btn btn-line dark" id="copy" type="button">Copy address</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The call</summary><pre><code>await rpc.requestAirdrop(you.address, lamports(1_000_000_000n)).send();
+<span class="c">// refused? get devnet SOL at faucet.solana.com</span></code></pre></details>
+          </li>
+
+          <li class="step" data-step="2" data-state="locked">
+            <div class="head"><span class="num">2</span><h3>Create the token</h3><span class="pill live">Done</span></div>
+            <p class="lead">One mint carries everything: confidential transfers with an auditor key, and Vigilantis as its transfer hook, freeze authority and pause authority. Its policy turns the blocklist on.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="2" disabled>Create the token</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The calls</summary><pre><code><span class="c">// Token-2022 extensions: ConfidentialTransferMint { auditorElgamalPubkey },</span>
+<span class="c">// TransferHook { Vigilantis }, PausableConfig { Vigilantis }; freeze authority: Vigilantis</span>
+const auditorKeypair = await deriveAuditorElgamalKeypair(auditor);   <span class="c">// @softseco/arcantis</span>
+const auditorElgamalPubkey = getAuditorElgamalPubkey(auditorKeypair);
+
+<span class="c">// the rules, with @softseco/vigilantis</span>
+await vigilantis.initializeExtraAccountMetaList(mint);
+await vigilantis.initializePolicy({ mint, allowlist: false, blocklist: true,
+                                    maxTransferAmount: 0, allowConfidential: true });</code></pre></details>
+          </li>
+
+          <li class="step" data-step="3" data-state="locked">
+            <div class="head"><span class="num">3</span><h3>Open accounts and deposit</h3><span class="pill live">Done</span></div>
+            <p class="lead">You, Bob and Mallory each get a token account set up for confidential transfers. You mint 1,000 test dollars and move them into your confidential balance. From here on the chain holds only ciphertext for it.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="3" disabled>Open and deposit</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>await configureAccount({ rpc, rpcSubscriptions, payer: you, owner: bob, mint });
+await deposit({ rpc, rpcSubscriptions, payer: you, owner: you, mint,
+                amount: 1_000_000_000n, decimals: 6 });
+await applyPendingBalance({ rpc, rpcSubscriptions, payer: you, owner: you, mint });</code></pre></details>
+          </li>
+
+          <li class="step" data-step="4" data-state="locked">
+            <div class="head"><span class="num">4</span><h3>Pay Bob privately</h3><span class="pill live">Done</span></div>
+            <p class="lead">The amount is encrypted three times, to you, to Bob and to the auditor. Token-2022 calls Vigilantis on the way, and Vigilantis checks who sends and who receives. Bob needs no SOL: you pay the fees.</p>
+            <div class="controls"><label class="field"><input id="amount" inputmode="decimal" value="250" aria-label="Amount to send to Bob"><span>to Bob</span></label><button class="btn btn-blue" data-run="4" disabled>Send</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK call</summary><pre><code>await transfer({ rpc, rpcSubscriptions, payer: you, owner: you, mint,
+                 destinationOwner: bob.address, amount: 250_000_000n,
+                 auditorElgamalPubkey });
+<span class="c">// the SDK finds the hook's accounts by itself</span></code></pre></details>
+          </li>
+
+          <li class="step" data-step="5" data-state="locked">
+            <div class="head"><span class="num">5</span><h3>See who can read it</h3><span class="pill live">Done</span></div>
+            <p class="lead">Three keys can open the amount. Everyone else sees two addresses and a ciphertext.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="5" disabled>Decrypt</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>await decryptBalance({ rpc, owner: you, mint });                                <span class="c">// you</span>
+await decryptBalance({ rpc, owner: bob, mint });                                <span class="c">// Bob</span>
+await decryptTransferAmountAsAuditor({ rpc, signature, auditorKeypair, mint }); <span class="c">// the auditor</span></code></pre></details>
+          </li>
+
+          <li class="step" data-step="6" data-state="locked">
+            <div class="head"><span class="num">6</span><h3>Withdraw to public</h3><span class="pill live">Done</span></div>
+            <p class="lead">Bob moves half of what he received to his public balance. He proves he has enough without showing how much he had.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="6" disabled>Withdraw half</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK call</summary><pre><code>await withdraw({ rpc, rpcSubscriptions, payer: you, owner: bob, mint,
+                 amount: 125_000_000n, decimals: 6 });</code></pre></details>
+          </li>
+
+          <li class="chapter">
+            <div class="eyebrow">02 · Vigilantis</div>
+            <h2>Public rules</h2>
+            <p>You are the issuer. Each action below records a reason code and a case reference on-chain. The case number itself stays private: the chain stores a salted hash of it. None of these actions can move anyone's tokens.</p>
+          </li>
+
+          <li class="step" data-step="7" data-state="locked">
+            <div class="head"><span class="num">7</span><h3>Block a wallet</h3><span class="pill live">Done</span></div>
+            <p class="lead">Mallory goes on the blocklist for sanctions, case DEMO-001. Then you try to pay her 50.00, confidentially. Vigilantis cannot see the amount, but it can see who gets paid.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="7" disabled>Block and pay Mallory</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>const salt = process.env.VIGILANTIS_CASE_SALT;   <span class="c">// the issuer's secret</span>
+await vigilantis.blockWallet(mint, mallory, {
+  reasonCode: ENFORCEMENT_REASONS.sanctions, caseRef: caseRef("DEMO-001", salt) });
+<span class="c">// or: vigilantis block add &lt;mint&gt; &lt;wallet&gt; --reason sanctions --case DEMO-001</span>
+
+await transfer({ ..., destinationOwner: mallory.address });   <span class="c">// refused: RecipientBlocked</span></code></pre></details>
+          </li>
+
+          <li class="step" data-step="8" data-state="locked">
+            <div class="head"><span class="num">8</span><h3>Freeze an account</h3><span class="pill live">Done</span></div>
+            <p class="lead">Bob's account is frozen for fraud, case DEMO-002, and he tries to pay you 10.00 from his public balance. Then the case is closed and his account is thawed. His balance never moves.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="8" disabled>Freeze, pay, thaw</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>await vigilantis.freezeTokenAccount(mint, bobToken, {
+  reasonCode: ENFORCEMENT_REASONS.fraud, caseRef: caseRef("DEMO-002", salt) });
+await vigilantis.transfer({ mint, amount: 10_000_000n, decimals: 6,
+                           owner: bob, destinationOwner: you });   <span class="c">// refused: AccountFrozen</span>
+<span class="c">// a confidential payment Arcantis refuses before it builds the proofs</span>
+await vigilantis.thawTokenAccount(mint, bobToken, {
+  reasonCode: ENFORCEMENT_REASONS.caseClosed, caseRef: caseRef("DEMO-002", salt) });</code></pre></details>
+          </li>
+
+          <li class="step" data-step="9" data-state="locked">
+            <div class="head"><span class="num">9</span><h3>Pause the token</h3><span class="pill live">Done</span></div>
+            <p class="lead">An internal review, case DEMO-003, pauses every transfer of the token at once, confidential ones included. Bob tries to pay you 10.00, then the review ends and transfers resume.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="9" disabled>Pause, pay, resume</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>await vigilantis.pause(mint, {
+  reasonCode: ENFORCEMENT_REASONS.internalReview, caseRef: caseRef("DEMO-003", salt) });
+await vigilantis.transfer({ mint, amount: 10_000_000n, decimals: 6,
+                           owner: bob, destinationOwner: you });   <span class="c">// refused: MintPaused</span>
+await vigilantis.resume(mint, {
+  reasonCode: ENFORCEMENT_REASONS.caseClosed, caseRef: caseRef("DEMO-003", salt) });</code></pre></details>
+          </li>
+
+          <li class="chapter">
+            <div class="eyebrow">03 · Oversight</div>
+            <h2>The auditor's report</h2>
+            <p>The auditor key opens every amount of this token, and nothing else. A supervisor or an accountant gets the full picture without the amounts ever being public.</p>
+          </li>
+
+          <li class="step" data-step="10" data-state="locked">
+            <div class="head"><span class="num">10</span><h3>Build the report</h3><span class="pill live">Done</span></div>
+            <p class="lead">Every deposit, transfer and withdraw of the token, read from the chain and decrypted with the auditor's key. Download it as CSV or JSON.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="10" disabled>Build the report</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>const activity = await listConfidentialActivity({ rpc, mint, auditorKeypair });
+confidentialActivityToCsv(activity, { decimals: 6 });
+<span class="c">// or: arcantis audit-report --mint &lt;mint&gt; --format json</span></code></pre></details>
+          </li>
+        </ol>
+
+        <aside class="side">
+          <div class="kc">
+            <div class="eyebrow">Keys in this browser</div>
+            <h3>Throwaway devnet wallets</h3>
+            <div>
+              <div class="row"><span>You<small>issuer and payer</small></span><a id="addr-you" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span>Bob<small>holder</small></span><a id="addr-bob" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span>Mallory<small>blocked in step 7</small></span><a id="addr-mallory" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span>Auditor<small>holds the auditor key</small></span><a id="addr-auditor" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span>Token</span><a id="token" target="_blank" rel="noopener">not created yet</a></div>
+              <div class="row"><span>Your SOL</span><b id="sol">—</b></div>
+            </div>
+            <table class="bal">
+              <thead><tr><th></th><th>Public</th><th>Confidential</th></tr></thead>
+              <tbody>
+                <tr><td>You</td><td id="you-pub">—</td><td id="you-conf">—</td></tr>
+                <tr><td>Bob</td><td id="bob-pub">—</td><td id="bob-conf">—</td></tr>
+              </tbody>
+            </table>
+            <button class="btn btn-line dark" id="reset" type="button">Start a new run</button>
+            <p class="fine">A new token, Bob, Mallory and auditor. Your wallet and its SOL stay. <button class="linkbtn" id="restart" type="button">Use new keys instead</button></p>
+            <p class="fine">The keys live only in this browser's storage. Devnet only: never send real funds to these addresses.</p>
+          </div>
+          <div class="kc dark">
+            <div class="eyebrow">In your app</div>
+            <p>The same calls from Node or your own web app.</p>
+            <pre>npm install @softseco/arcantis
+npm install @softseco/vigilantis</pre>
+            <p><a href="https://github.com/softseco/arcantis#readme">Arcantis</a> · <a href="https://github.com/softseco/vigilantis#readme">Vigilantis</a></p>
+          </div>
+        </aside>
+      </div>
+
+      <div id="finale" hidden>
+        <div class="eyebrow">Done</div>
+        <h2>Every amount stayed private. Every rule held.</h2>
+        <p>The chain enforced the issuer's rules on payments nobody else could read, each with its reason on record, and the auditor still saw all of it.</p>
+        <button class="btn btn-white" id="again" type="button">Run it again</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec cta-sec">
+    <div class="wrap"><div class="cta blue rv" data-fx="cipher"><h2>Build on it.</h2><p>Arcantis and Vigilantis are source-available. Payments, payroll or treasury on Solana: open an issue, or write to hello@softseco.com.</p><div class="acts"><a class="btn btn-white" href="https://github.com/softseco/arcantis" target="_blank" rel="noopener">Arcantis on GitHub</a><a class="btn btn-line" href="https://github.com/softseco/vigilantis" target="_blank" rel="noopener">Vigilantis on GitHub</a></div></div></div>
+  </section>
+</main>
+
+<!-- site:footer -->
+</div>
+<div class="blur-edge-y" aria-hidden="true"></div>
+<div class="blur-edge-x" aria-hidden="true"></div>
+
+<script src="site.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

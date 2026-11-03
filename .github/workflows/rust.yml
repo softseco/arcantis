@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: BUSL-1.1
+name: rust
+
+on:
+  push:
+    paths:
+      - "rust/**"
+      - "test-vectors/**"
+      - "test/fixtures/**"
+      - "scripts/start-test-validator.sh"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - "test-vectors/**"
+      - "test/fixtures/**"
+      - "scripts/start-test-validator.sh"
+      - ".github/workflows/rust.yml"
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo build --verbose
+      # Unit tests, the shared test vectors and the doc example; the on-chain tests skip here.
+      - run: cargo test --verbose
+
+  on-chain:
+    name: on-chain tests (local validator, Sentinel, Anchor example)
+    runs-on: ubuntu-latest
+    env:
+      SOLANA_VERSION: "4.2.2"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust
+            rust/examples/anchor-vault
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.local/share/solana
+            ~/.cache/solana
+          key: solana-${{ env.SOLANA_VERSION }}
+      - name: Install the Solana toolchain
+        run: |
+          if [ ! -x "$HOME/.local/share/solana/install/active_release/bin/solana-test-validator" ]; then
+            sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
+          fi
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Build the Anchor example program
+        working-directory: rust/examples/anchor-vault
+        run: cargo build-sbf --manifest-path programs/confidential-vault/Cargo.toml
+      - name: Start a local validator with Token-2022, Sentinel and the example
+        working-directory: .
+        run: |
+          TOKEN_2022_SO=test/fixtures/spl_token_2022.so \
+          SENTINEL_SO=test/fixtures/sentinel.so \
+          CONFIDENTIAL_VAULT_SO=rust/examples/anchor-vault/target/deploy/confidential_vault.so \
+            bash scripts/start-test-validator.sh > validator.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -s http://127.0.0.1:8899 -X POST -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' | grep -q '"ok"' && exit 0
+            sleep 1
+          done
+          tail -n 40 validator.log
+          exit 1
+      - name: On-chain tests
+        run: CT_LOCAL_PROGRAM=1 cargo test -- --test-threads 1
+      - name: Validator log
+        if: failure()
+        working-directory: .
+        run: tail -n 60 validator.log || true
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Fails on a known vulnerability in Cargo.lock. Warnings (unmaintained, unsound, yanked
+      # crates deep in the Solana dependency tree) are reported but do not fail the job.
+      - run: cargo audit

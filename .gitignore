@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+test-ledger/
+*.log
+.env
+.DS_Store
+target/
+test/browser/artifacts/
+
+# Keys and secrets: never commit them
+*keypair*.json
+id.json
+*.pem
+*.key
+rpc.txt
+.env
+.env.*

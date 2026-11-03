@@ -1,0 +1,186 @@
+<!DOCTYPE html><html class="default" lang="en" data-base="../"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>Web apps | @softseco/arcantis - v1.0.0-rc.1</title><meta name="description" content="Documentation for @softseco/arcantis"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/icons.js" id="tsd-icons-script"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar">
+<div class="tsd-toolbar-contents container"><a href="../index.html" class="title">@softseco/arcantis - v1.0.0-rc.1</a>
+<div id="tsd-toolbar-links"><a href="https://github.com/softseco/arcantis">GitHub</a><a href="https://www.npmjs.com/package/@softseco/arcantis">npm</a><a href="https://softseco.github.io/arcantis/">Playground</a></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/>
+<ul role="listbox" id="tsd-search-results"></ul>
+<div id="tsd-search-status" aria-live="polite" aria-atomic="true">
+<div>Preparing search index...</div></div></dialog><a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-menu"></use></svg></a></div></header>
+<div class="container container-main">
+<div class="col-content">
+<div class="tsd-page-title">
+<ul class="tsd-breadcrumb" aria-label="Breadcrumb">
+<li><a href="" aria-current="page">Web apps</a></li></ul></div>
+<div class="tsd-panel tsd-typography"><h1 id="using-the-sdk-in-a-web-app" class="tsd-anchor-link">Using the SDK in a web app<a href="#using-the-sdk-in-a-web-app" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h1>
+<p>Since 3.1.0 the package has a browser build. Bundlers that honour the <code>browser</code> export condition
+(Vite, webpack 5, esbuild with <code>platform: &quot;browser&quot;</code>, and the frameworks built on them) pick it up
+by themselves, with no alias. This guide covers what is different in a browser: loading the
+cryptography, getting keys from a wallet, and what the user sees.</p>
+<p>A complete app to copy from is in
+<a href="https://github.com/softseco/arcantis/tree/main/examples/vite"><code>examples/vite</code></a>.</p>
+<h2 id="install" class="tsd-anchor-link">Install<a href="#install" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<pre><code class="bash"><span class="hl-4">npm</span><span class="hl-1"> </span><span class="hl-8">install</span><span class="hl-1"> </span><span class="hl-8">@softseco/arcantis</span><span class="hl-1"> </span><span class="hl-8">@solana/kit</span><span class="hl-1"> </span><span class="hl-8">@solana/wallet-account-signer</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="the-cryptography-is-webassembly" class="tsd-anchor-link">The cryptography is WebAssembly<a href="#the-cryptography-is-webassembly" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>Proofs and encryption run in <code>@solana/zk-sdk</code>, which is WebAssembly (about 2.7 MB, and it does not
+compress much). The SDK loads it on the first call that needs it. To start the download as soon
+as the page opens, call this once at startup:</p>
+<pre><code class="ts"><span class="hl-3">import</span><span class="hl-1"> { </span><span class="hl-5">initConfidentialTransfers</span><span class="hl-1"> } </span><span class="hl-3">from</span><span class="hl-1"> </span><span class="hl-8">&quot;@softseco/arcantis&quot;</span><span class="hl-1">;</span><br/><br/><span class="hl-0">void</span><span class="hl-1"> </span><span class="hl-4">initConfidentialTransfers</span><span class="hl-1">();</span>
+</code><button type="button">Copy</button></pre>
+
+<p>The browser fetches <code>index_bg.wasm</code> from next to the zk-sdk module. Vite and webpack 5 see that
+reference and copy the file into your build:</p>
+<ul>
+<li>
+<p><strong>webpack 5</strong>: nothing to configure.</p>
+</li>
+<li>
+<p><strong>Vite</strong>: nothing to configure for <code>vite build</code>. For the dev server, add this to <code>vite.config</code>:</p>
+<pre><code class="ts"><span class="hl-3">export</span><span class="hl-1"> </span><span class="hl-3">default</span><span class="hl-1"> </span><span class="hl-4">defineConfig</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-5">optimizeDeps:</span><span class="hl-1"> { </span><span class="hl-5">exclude:</span><span class="hl-1"> [</span><span class="hl-8">&quot;@solana/zk-sdk&quot;</span><span class="hl-1">] },</span><br/><span class="hl-1">});</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Without it the dev server pre-bundles zk-sdk into another folder and the <code>.wasm</code> request fails.
+In a monorepo, or with the SDK linked from a local folder, the dev server may also refuse the
+file (HTTP 403) because it is outside your project: add that <code>node_modules</code> folder to
+<code>server.fs.allow</code>.</p>
+</li>
+<li>
+<p><strong>Anything else</strong> (esbuild, for example, does not copy it): serve
+<code>node_modules/@solana/zk-sdk/dist/web/index_bg.wasm</code> yourself and say where it is:</p>
+<pre><code class="ts"><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">initConfidentialTransfers</span><span class="hl-1">({ </span><span class="hl-5">wasmUrl:</span><span class="hl-1"> </span><span class="hl-8">&quot;/zk/index_bg.wasm&quot;</span><span class="hl-1"> });</span>
+</code><button type="button">Copy</button></pre>
+
+</li>
+</ul>
+<p>If the file does not load, the SDK throws an error that says so and names these fixes.</p>
+<p>Tested in Chromium: Vite 8 (production build and dev server, in CI on every push) and webpack 5
+(production build). The keys a browser derives are byte-for-byte the ones Node derives.</p>
+<h2 id="keys-from-a-wallet" class="tsd-anchor-link">Keys from a wallet<a href="#keys-from-a-wallet" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>The confidential keys (ElGamal and AES) come from the wallet's signature over one fixed message,
+<code>solana-conf-bal/v1</code>. A wallet signs it through Wallet Standard's <code>solana:signMessage</code>. Ask for
+that signature once, keep the keys in memory, and pass them to every call as <code>keys</code>:</p>
+<pre><code class="ts"><span class="hl-3">import</span><span class="hl-1"> { </span><span class="hl-5">createSignerFromWalletAccount</span><span class="hl-1"> } </span><span class="hl-3">from</span><span class="hl-1"> </span><span class="hl-8">&quot;@solana/wallet-account-signer&quot;</span><span class="hl-1">;</span><br/><span class="hl-3">import</span><span class="hl-1"> { </span><span class="hl-5">deriveConfidentialKeys</span><span class="hl-1">, </span><span class="hl-5">decryptBalance</span><span class="hl-1">, </span><span class="hl-5">transfer</span><span class="hl-1"> } </span><span class="hl-3">from</span><span class="hl-1"> </span><span class="hl-8">&quot;@softseco/arcantis&quot;</span><span class="hl-1">;</span><br/><span class="hl-3">import</span><span class="hl-1"> { </span><span class="hl-5">isMessageSigner</span><span class="hl-1"> } </span><span class="hl-3">from</span><span class="hl-1"> </span><span class="hl-8">&quot;@solana/kit&quot;</span><span class="hl-1">;</span><br/><br/><span class="hl-0">const</span><span class="hl-1"> </span><span class="hl-2">signer</span><span class="hl-1"> = </span><span class="hl-4">createSignerFromWalletAccount</span><span class="hl-1">(</span><span class="hl-5">uiWalletAccount</span><span class="hl-1">, </span><span class="hl-8">&quot;solana:devnet&quot;</span><span class="hl-1">);</span><br/><span class="hl-3">if</span><span class="hl-1"> (!</span><span class="hl-4">isMessageSigner</span><span class="hl-1">(</span><span class="hl-5">signer</span><span class="hl-1">)) </span><span class="hl-3">throw</span><span class="hl-1"> </span><span class="hl-0">new</span><span class="hl-1"> </span><span class="hl-4">Error</span><span class="hl-1">(</span><span class="hl-8">&quot;This wallet cannot sign messages&quot;</span><span class="hl-1">);</span><br/><br/><span class="hl-7">// One wallet prompt: &quot;sign this message&quot;.</span><br/><span class="hl-0">const</span><span class="hl-1"> </span><span class="hl-2">keys</span><span class="hl-1"> = </span><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">deriveConfidentialKeys</span><span class="hl-1">({ </span><span class="hl-5">signer</span><span class="hl-1"> });</span><br/><br/><span class="hl-7">// No more message prompts: the keys are passed in.</span><br/><span class="hl-0">const</span><span class="hl-1"> </span><span class="hl-2">balance</span><span class="hl-1"> = </span><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">decryptBalance</span><span class="hl-1">({ </span><span class="hl-5">rpc</span><span class="hl-1">, </span><span class="hl-5">owner:</span><span class="hl-1"> </span><span class="hl-5">signer</span><span class="hl-1">, </span><span class="hl-5">mint</span><span class="hl-1">, </span><span class="hl-5">keys</span><span class="hl-1"> });</span><br/><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">transfer</span><span class="hl-1">({ </span><span class="hl-5">rpc</span><span class="hl-1">, </span><span class="hl-5">rpcSubscriptions</span><span class="hl-1">, </span><span class="hl-5">payer:</span><span class="hl-1"> </span><span class="hl-5">signer</span><span class="hl-1">, </span><span class="hl-5">owner:</span><span class="hl-1"> </span><span class="hl-5">signer</span><span class="hl-1">, </span><span class="hl-5">mint</span><span class="hl-1">, </span><span class="hl-5">destinationOwner</span><span class="hl-1">, </span><span class="hl-5">amount</span><span class="hl-1">, </span><span class="hl-5">keys</span><span class="hl-1"> });</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Without <code>keys</code>, every call asks the wallet to sign the message again. That works, but the user
+gets one extra prompt per call.</p>
+<p>With React, <code>@solana/react</code> gives you the two signers as hooks:</p>
+<pre><code class="tsx"><span class="hl-0">const</span><span class="hl-1"> </span><span class="hl-2">messageSigner</span><span class="hl-1"> = </span><span class="hl-4">useWalletAccountMessageSigner</span><span class="hl-1">(</span><span class="hl-5">account</span><span class="hl-1">);</span><br/><span class="hl-0">const</span><span class="hl-1"> </span><span class="hl-2">signer</span><span class="hl-1"> = </span><span class="hl-4">useWalletAccountTransactionSigner</span><span class="hl-1">(</span><span class="hl-5">account</span><span class="hl-1">, </span><span class="hl-8">&quot;solana:devnet&quot;</span><span class="hl-1">);</span><br/><br/><span class="hl-0">const</span><span class="hl-1"> </span><span class="hl-2">keys</span><span class="hl-1"> = </span><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">deriveConfidentialKeys</span><span class="hl-1">({ </span><span class="hl-5">signer:</span><span class="hl-1"> </span><span class="hl-5">messageSigner</span><span class="hl-1"> });</span><br/><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">configureAccount</span><span class="hl-1">({ </span><span class="hl-5">rpc</span><span class="hl-1">, </span><span class="hl-5">rpcSubscriptions</span><span class="hl-1">, </span><span class="hl-5">payer:</span><span class="hl-1"> </span><span class="hl-5">signer</span><span class="hl-1">, </span><span class="hl-5">owner:</span><span class="hl-1"> </span><span class="hl-5">signer</span><span class="hl-1">, </span><span class="hl-5">mint</span><span class="hl-1">, </span><span class="hl-5">keys</span><span class="hl-1"> });</span>
+</code><button type="button">Copy</button></pre>
+
+<p>What to know about the keys:</p>
+<ul>
+<li>They belong to the wallet, not to a mint: one set reads every confidential account the wallet
+owns. They are the same keys the spl-token CLI and other standard clients derive.</li>
+<li>They cannot move funds (that needs the wallet's transaction signature), but they decrypt every
+balance and amount of the wallet. Keep them in memory for the session. Do not put them in
+<code>localStorage</code>; after a reload, ask for the signature again.</li>
+<li>Before it decrypts a balance or builds a proof, the SDK checks that the keys match the
+account's ElGamal key, so keys from the wrong wallet fail with a clear error instead of wrong
+numbers.</li>
+</ul>
+<h2 id="what-the-wallet-must-support" class="tsd-anchor-link">What the wallet must support<a href="#what-the-wallet-must-support" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<ul>
+<li><code>solana:signMessage</code>, signing the message as given. The SDK verifies the signature and refuses
+a wallet that changes the message, because the keys would then differ from the standard ones.</li>
+<li><code>solana:signTransaction</code>. A wallet that only offers <code>signAndSendTransaction</code> cannot be used yet,
+because the SDK simulates each transaction before sending it.</li>
+</ul>
+<p>Phantom, Solflare and Backpack support both. When a wallet cannot sign messages, the SDK's error
+says so; you can check up front with <code>isMessageSigner(signer)</code> or <code>&quot;solana:signMessage&quot; in wallet.features</code>.</p>
+<h2 id="what-the-user-approves" class="tsd-anchor-link">What the user approves<a href="#what-the-user-approves" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>Since 3.2.0 the wallet is asked once per operation. A transfer is five transactions, but the SDK
+plans and signs them together, so the wallet shows one request for all five:</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Wallet prompts</th>
+<th>Transactions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Unlock (<code>deriveConfidentialKeys</code>)</td>
+<td>1 (sign a message)</td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>configureAccount</code></td>
+<td>1</td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>deposit</code></td>
+<td>1</td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>applyPendingBalance</code></td>
+<td>1</td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>transfer</code></td>
+<td>1</td>
+<td>5 (proof accounts, then the transfer together with closing them)</td>
+</tr>
+<tr>
+<td><code>withdraw</code></td>
+<td>1</td>
+<td>4</td>
+</tr>
+</tbody>
+</table>
+<p>The transactions are then sent one after another, each simulated first. If one fails before the
+transfer itself lands, the SDK closes the proof accounts it created (their rent goes back to the
+payer) and throws a <code>ConfidentialTransfersError</code>. Closing them is one more transaction, so the
+wallet asks once more in that case.</p>
+<h2 id="errors" class="tsd-anchor-link">Errors<a href="#errors" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>Everything the SDK throws on purpose is a <code>ConfidentialTransfersError</code> with a <code>code</code>, so the app
+can say something useful instead of showing a stack trace:</p>
+<pre><code class="ts"><span class="hl-3">import</span><span class="hl-1"> { </span><span class="hl-5">isConfidentialTransfersError</span><span class="hl-1"> } </span><span class="hl-3">from</span><span class="hl-1"> </span><span class="hl-8">&quot;@softseco/arcantis&quot;</span><span class="hl-1">;</span><br/><br/><span class="hl-3">try</span><span class="hl-1"> {</span><br/><span class="hl-1">  </span><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">transfer</span><span class="hl-1">({ </span><span class="hl-5">rpc</span><span class="hl-1">, </span><span class="hl-5">rpcSubscriptions</span><span class="hl-1">, </span><span class="hl-5">payer:</span><span class="hl-1"> </span><span class="hl-5">signer</span><span class="hl-1">, </span><span class="hl-5">owner:</span><span class="hl-1"> </span><span class="hl-5">signer</span><span class="hl-1">, </span><span class="hl-5">mint</span><span class="hl-1">, </span><span class="hl-5">destinationOwner</span><span class="hl-1">, </span><span class="hl-5">amount</span><span class="hl-1">, </span><span class="hl-5">keys</span><span class="hl-1"> });</span><br/><span class="hl-1">} </span><span class="hl-3">catch</span><span class="hl-1"> (</span><span class="hl-5">e</span><span class="hl-1">) {</span><br/><span class="hl-1">  </span><span class="hl-3">if</span><span class="hl-1"> (</span><span class="hl-4">isConfidentialTransfersError</span><span class="hl-1">(</span><span class="hl-5">e</span><span class="hl-1">, </span><span class="hl-8">&quot;PENDING_BALANCE_LIMIT&quot;</span><span class="hl-1">)) </span><span class="hl-4">showMessage</span><span class="hl-1">(</span><span class="hl-8">&quot;The recipient has to accept their incoming payments first.&quot;</span><span class="hl-1">);</span><br/><span class="hl-1">  </span><span class="hl-3">else</span><span class="hl-1"> </span><span class="hl-3">if</span><span class="hl-1"> (</span><span class="hl-4">isConfidentialTransfersError</span><span class="hl-1">(</span><span class="hl-5">e</span><span class="hl-1">, </span><span class="hl-8">&quot;INSUFFICIENT_FUNDS&quot;</span><span class="hl-1">)) </span><span class="hl-4">showMessage</span><span class="hl-1">(</span><span class="hl-8">&quot;Not enough confidential balance.&quot;</span><span class="hl-1">);</span><br/><span class="hl-1">  </span><span class="hl-3">else</span><span class="hl-1"> </span><span class="hl-3">if</span><span class="hl-1"> (</span><span class="hl-4">isConfidentialTransfersError</span><span class="hl-1">(</span><span class="hl-5">e</span><span class="hl-1">) &amp;&amp; </span><span class="hl-5">e</span><span class="hl-1">.</span><span class="hl-5">retryable</span><span class="hl-1">) </span><span class="hl-4">showMessage</span><span class="hl-1">(</span><span class="hl-8">&quot;The network was busy. Try again.&quot;</span><span class="hl-1">);</span><br/><span class="hl-1">  </span><span class="hl-3">else</span><span class="hl-1"> </span><span class="hl-3">throw</span><span class="hl-1"> </span><span class="hl-5">e</span><span class="hl-1">;</span><br/><span class="hl-1">}</span>
+</code><button type="button">Copy</button></pre>
+
+<p>The checks that can be made before anything is signed (the recipient's account exists, is
+configured and can take another payment; the amount fits; the balance covers it) are made first,
+so a doomed operation fails before the wallet opens.</p>
+<p>On a busy network, pass <code>computeUnitPrice</code> (a priority fee in micro-lamports per compute unit),
+and <code>retries</code> to run the operation again when a transaction expires. A retry signs new
+transactions, so the wallet asks again.</p>
+<h2 id="testing" class="tsd-anchor-link">Testing<a href="#testing" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p><code>test/browser/e2e.ts</code> runs <code>examples/vite</code> in Chromium with a Wallet Standard
+test wallet against a local validator: connect, unlock, set up, deposit, apply, transfer,
+withdraw, then checks the balances, that the wallet signed the key message exactly once, and that
+it was asked to approve transactions once per operation. CI runs it on every push. To run it yourself, see
+<a href="https://github.com/softseco/arcantis/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>.</p>
+</div></div>
+<div class="col-sidebar">
+<div class="page-menu">
+<div class="tsd-navigation settings">
+<details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
+<h3>Settings</h3></summary>
+<div class="tsd-accordion-details">
+<div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span>
+<ul id="tsd-filter-options">
+<li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-protected" name="protected"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Protected</span></label></li>
+<li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li>
+<li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div>
+<div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div>
+<details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
+<h3>On This Page</h3></summary>
+<div class="tsd-accordion-details"><a href="#using-the-sdk-in-a-web-app"><span>Using the <wbr/>SDK in a web app</span></a>
+<ul>
+<li><a href="#install"><span>Install</span></a></li>
+<li><a href="#the-cryptography-is-webassembly"><span>The cryptography is <wbr/>Web<wbr/>Assembly</span></a></li>
+<li><a href="#keys-from-a-wallet"><span>Keys from a wallet</span></a></li>
+<li><a href="#what-the-wallet-must-support"><span>What the wallet must support</span></a></li>
+<li><a href="#what-the-user-approves"><span>What the user approves</span></a></li>
+<li><a href="#errors"><span>Errors</span></a></li>
+<li><a href="#testing"><span>Testing</span></a></li></ul></div></details></div>
+<div class="site-menu">
+<nav id="tsd-sidebar-links" class="tsd-navigation"><a href="https://github.com/softseco/arcantis" class="tsd-nav-link">GitHub</a><a href="https://www.npmjs.com/package/@softseco/arcantis" class="tsd-nav-link">npm</a><a href="https://softseco.github.io/arcantis/" class="tsd-nav-link">Playground</a></nav>
+<nav class="tsd-navigation"><a href="../index.html">@softseco/arcantis - v1.0.0-rc.1</a>
+<ul class="tsd-small-nested-navigation" id="tsd-nav-container">
+<li>Loading...</li></ul></nav></div></div></div><footer>
+<p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer>
+<div class="overlay"></div></body></html>

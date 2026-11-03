@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: BUSL-1.1
+[package]
+name = "arcantis"
+version = "1.0.0-rc.1"
+edition = "2021"
+# The oldest Rust the pinned Solana crates accept (several declare 1.89), checked with
+# `cargo +1.89 check`.
+rust-version = "1.89"
+license = "BUSL-1.1"
+description = "Arcantis for Rust: helpers for SPL Token-2022 confidential transfers, a mirror of the @softseco/arcantis TypeScript SDK."
+repository = "https://github.com/softseco/arcantis"
+readme = "README.md"
+keywords = ["solana", "token-2022", "confidential", "elgamal"]
+categories = ["cryptography::cryptocurrencies"]
+# Ship only what a consumer of the crate needs; internal working notes stay out of the
+# published tarball.
+include = ["src/**/*.rs", "Cargo.toml", "README.md", "LICENSE", "NOTICE"]
+
+[package.metadata.docs.rs]
+# The crate has no features of its own; the Solana client crates build for Linux.
+all-features = true
+targets = ["x86_64-unknown-linux-gnu"]
+
+# Versions are pinned with `=` to the exact set the official spl-token-cli uses,
+# because the Solana crate ecosystem is mid-migration (3.x -> 4.x) and newer
+# patch releases pull conflicting major versions. solana-zk-sdk must stay on the
+# same major as spl-token-client's own dependency, so that the ElGamal/AES key
+# types line up across the crate boundary.
+#
+# 2.0.0 needs the standard `encryption::derivation` module, which landed in
+# solana-zk-sdk 7. Three pins move together as a set, because each is built
+# against a specific major of solana-zk-sdk and their types meet at call
+# boundaries:
+#
+#   solana-zk-sdk 7.0.1
+#   spl-token-client 0.19.1                              (0.19.0 used zk-sdk 6)
+#   spl-token-confidential-transfer-proof-generation 0.6.1  (0.6.0 used zk-sdk 6)
+#
+# Mixing majors compiles but does not type-check: ElGamalKeypair from one major
+# is a different type from ElGamalKeypair in the other. Bump all three or none.
+[dependencies]
+solana-sdk = "=3.0.0"
+solana-client = { version = "=4.0.0-rc.0", features = ["agave-unstable-api"] }
+solana-zk-sdk = "=7.0.1"
+spl-token-2022 = { version = "=11.0.0", features = ["no-entrypoint"] }
+# Without the default `display` feature (solana-cli-output, which brings clap 2 and, through
+# solana-remote-wallet, hidapi and libusb). Only `zk_proofs` is used, which needs no feature.
+spl-token-client = { version = "=0.19.1", default-features = false }
+spl-token-confidential-transfer-proof-generation = "=0.6.1"
+# The same versions spl-token-client 0.19.1 resolves to, used directly since 3.0.0 to build the
+# instructions and send the transactions (priority fee, simulation, proof-account cleanup).
+spl-token-2022-interface = "=3.1.1"
+spl-token-confidential-transfer-proof-extraction = "=0.6.1"
+spl-associated-token-account-interface = "=2.0.0"
+solana-zk-elgamal-proof-interface = "=0.1.3"
+solana-zk-sdk-pod = "=0.1.2"
+solana-compute-budget-interface = "=3.0.0"
+solana-system-interface = { version = "=3.2.0", features = ["bincode"] }
+bytemuck = "1.25"
+# Already in the tree through solana-client; used directly to wait between confirmation polls.
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde_json = "1"
+bs58 = "0.5"
+# The versions spl-token-2022 resolves to, to build a transfer hook's account list in a unit test.
+spl-tlv-account-resolution = "=0.11.1"
+spl-transfer-hook-interface = "=2.1.0"

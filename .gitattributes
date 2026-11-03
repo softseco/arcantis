@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+# Binary
+*.png binary
+*.jpg binary
+*.so binary

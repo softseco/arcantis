@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: BUSL-1.1
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    name: test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20.18 is the minimum in package.json `engines`; 22 and 24 are the current LTS lines.
+        node: [ "20", "22", "24" ]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  onchain:
+    name: on-chain and browser tests (local validator)
+    runs-on: ubuntu-latest
+    env:
+      SOLANA_VERSION: "4.2.2"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            examples/vite/package-lock.json
+      - uses: actions/cache@v6
+        with:
+          path: ~/.local/share/solana
+          key: solana-${{ env.SOLANA_VERSION }}
+      - name: Install the Solana toolchain
+        run: |
+          if [ ! -x "$HOME/.local/share/solana/install/active_release/bin/solana-test-validator" ]; then
+            sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
+          fi
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Start a local validator with Token-2022 from test/fixtures
+        run: |
+          TOKEN_2022_SO=test/fixtures/spl_token_2022.so bash scripts/start-test-validator.sh > validator.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -s http://127.0.0.1:8899 -X POST -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' | grep -q '"ok"' && exit 0
+            sleep 1
+          done
+          tail -n 40 validator.log
+          exit 1
+      - run: npm ci
+      - run: npm run build
+      - name: On-chain integration tests
+        run: CT_LOCAL_PROGRAM=1 npm test
+      - name: Build the Vite example for the local validator
+        working-directory: examples/vite
+        run: |
+          npm ci
+          npm run typecheck
+          VITE_RPC_URL=http://127.0.0.1:8899 VITE_CHAIN=solana:localnet npx vite build
+      - run: npx playwright-core install --with-deps chromium
+      - name: Browser test (examples/vite in Chromium, Wallet Standard test wallet)
+        run: npm run test:browser
+      - name: Validator log
+        if: failure()
+        run: tail -n 40 test-ledger/validator.log || tail -n 40 validator.log || true
+      - name: Screenshot of the failed step
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-test
+          path: test/browser/artifacts/
+          if-no-files-found: ignore

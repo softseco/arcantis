@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Playground — Softseco</title>
+<meta name="description" content="Run a confidential token on Solana devnet in your browser. Arcantis keeps the amounts encrypted, Vigilantis enforces the issuer's rules, and an auditor can still read every transfer.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Softseco">
+<meta property="og:title" content="Playground — Softseco">
+<meta property="og:description" content="A confidential token on Solana devnet, in your browser: encrypted amounts with Arcantis, the issuer's rules with Vigilantis, and an auditor who can still read every transfer.">
+<meta property="og:url" content="https://softseco.github.io/arcantis/">
+<meta property="og:image" content="https://softseco.github.io/arcantis/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Softseco playground: Private amounts. Public rules.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#1315FF">
+<link rel="icon" type="image/svg+xml" href="softseco-mark.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400..800&family=Red+Hat+Text:wght@400..600&family=Red+Hat+Mono:wght@400..500&display=swap">
+<link rel="stylesheet" href="site.css">
+<style>
+  /* The playground's own styles, on top of softseco.com's (site.css): the steps, the wallets card and the outputs. */
+  :root { --stop: #C4161C; --stop-soft: #FDEDEE; --done: #00A86B; }
+  [hidden] { display: none !important; }
+  .pg-playground code { font-family: var(--mono); font-size: .88em; background: var(--mist); padding: 1px 6px; border-radius: 6px; }
+  .pg-playground pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; color: inherit; }
+  .pg-playground .sec-head .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .pg-playground .pill .v { font-family: var(--mono); font-weight: 500; }
+  #ready { display: inline-flex; align-items: center; gap: 10px; margin-top: 4px; font-family: var(--mono); font-size: 13px; color: var(--grey); }
+  #ready::before { content: ""; width: 7px; height: 7px; background: var(--blue); animation: tag-blink 1.6s steps(2, end) infinite; }
+  #ready.err { color: var(--stop); }
+  #ready.err::before { background: var(--stop); animation: none; }
+
+  .pg-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 40px; align-items: start; }
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .chapter { padding: 56px 0 10px; display: grid; gap: 12px; }
+  .chapter:first-child { padding-top: 0; }
+  .chapter h2 { font-size: clamp(30px, 3.2vw, 44px); letter-spacing: -.03em; line-height: 1.04; }
+  .chapter p { color: var(--grey); max-width: 60ch; }
+
+  .step { background: var(--mist); border-radius: 24px; padding: 28px 30px 30px; transition: background .35s var(--ease), box-shadow .35s var(--ease), opacity .35s var(--ease); }
+  .step[data-state="locked"] { opacity: .45; }
+  .step[data-state="ready"] { background: var(--paper); box-shadow: inset 0 0 0 1.5px var(--blue), 0 24px 48px rgba(19, 21, 255, .08); }
+  .step .head { display: flex; align-items: center; gap: 16px; }
+  .step .head .num { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 50%; background: var(--paper); font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--grey); }
+  .step[data-state="ready"] .head .num { background: var(--blue); color: #fff; }
+  .step[data-state="done"] .head .num { background: var(--done); color: #fff; }
+  .step h3 { font-size: 21px; letter-spacing: -.015em; line-height: 1.2; }
+  .step .pill.live { margin-left: auto; display: none; }
+  .step[data-state="done"] .pill.live { display: inline-flex; }
+  .step .lead { margin: 12px 0 20px 52px; font-size: 16px; color: var(--grey); max-width: 62ch; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-left: 52px; }
+  .btn:disabled { opacity: .3; cursor: default; pointer-events: none; }
+  .field { display: flex; align-items: center; gap: 8px; height: 50px; padding: 0 20px; border-radius: 99px; background: var(--paper); box-shadow: inset 0 0 0 1.5px var(--line); }
+  .field:focus-within { box-shadow: inset 0 0 0 1.5px var(--blue); }
+  .field input { border: 0; background: transparent; font: 600 16px var(--mono); width: 92px; outline: none; color: var(--ink); }
+  .field span { color: var(--grey); font-size: 14.5px; white-space: nowrap; }
+  .status { margin: 14px 0 0 52px; font-family: var(--mono); font-size: 13px; line-height: 1.55; color: var(--grey); min-height: 1em; overflow-wrap: anywhere; }
+  .status:empty { display: none; }
+  .status.ok { color: var(--blue); }
+  .status.err { color: var(--stop); }
+  .out { margin: 18px 0 0 52px; display: flex; flex-direction: column; }
+  .out:empty { display: none; }
+  .out > * { min-width: 0; }
+  .kv { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  .kv:first-child { border-top: 0; padding-top: 0; }
+  .kv > span { font-family: var(--mono); font-size: 12px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); min-width: 150px; }
+  .kv b { font-family: var(--display); font-weight: 600; font-size: 17px; }
+  .kv em { font-style: normal; color: var(--grey); font-size: 14px; }
+  .kv a, .links a, .who a { color: var(--blue); font-family: var(--mono); font-size: 13.5px; }
+  .kv a:hover, .links a:hover, .who a:hover { text-decoration: underline; }
+  .note { margin: 12px 0 0; color: var(--grey); font-size: 15px; }
+  .note.done { color: var(--ink); font-family: var(--display); font-weight: 600; font-size: 18px; letter-spacing: -.01em; }
+  .links { margin: 10px 0 0; padding-left: 18px; }
+  .who { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; padding: 14px 18px; border-radius: 16px; font-size: 15px; margin-top: 6px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); }
+  .who:first-child { margin-top: 0; }
+  .who b { font-family: var(--display); font-weight: 600; min-width: 118px; }
+  .who.ok { background: var(--blue-soft); box-shadow: none; }
+  .who.no { color: var(--grey); }
+  .who.stop { background: var(--stop-soft); box-shadow: none; }
+  .who.stop b { color: var(--stop); }
+  .who code.log { flex-basis: 100%; display: block; font-size: 12px; white-space: normal; overflow-wrap: anywhere; background: rgba(255, 255, 255, .8); padding: 7px 11px; border-radius: 8px; }
+  .table-wrap { overflow-x: auto; }
+  .report { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .report th { text-align: left; font-family: var(--mono); font-size: 11.5px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); padding: 0 14px 10px 0; border-bottom: 1px solid var(--ink); white-space: nowrap; }
+  .report td { padding: 11px 14px 11px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .report td:first-child, .report td:nth-child(2), .report td:last-child { font-family: var(--mono); font-size: 13px; }
+  .report .num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--display); font-weight: 600; }
+  .out .controls { margin: 18px 0 0; }
+  details.code { margin: 18px 0 0 52px; }
+  details.code summary { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); list-style: none; }
+  details.code summary::-webkit-details-marker { display: none; }
+  details.code summary::before { content: "+"; color: var(--blue); font-size: 15px; }
+  details.code[open] summary::before { content: "–"; }
+  details.code pre { margin: 12px 0 0; padding: 18px 20px; background: var(--night); color: #E6E7F0; border-radius: 16px; overflow-x: auto; font: 13px/1.65 var(--mono); }
+  details.code pre .c { color: var(--grey-2); }
+
+  .side { position: sticky; top: calc(var(--hdr) + 24px); display: grid; gap: 14px; }
+  .side .kc { padding: 28px 26px 28px; }
+  .side .kc:hover { transform: none; }
+  .side h3 { font-size: 20px; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  .row > span { color: var(--grey); }
+  .row > span small { display: block; font-size: 12.5px; color: var(--grey-2); }
+  .row a, .row b { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--ink); }
+  .row a:hover { color: var(--blue); }
+  .bal { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 15px; }
+  .bal th { text-align: right; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); padding: 8px 0; border-bottom: 1px solid var(--ink); }
+  .bal th:first-child, .bal td:first-child { text-align: left; }
+  .bal td { text-align: right; padding: 10px 0; border-bottom: 1px solid var(--line); font-family: var(--display); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bal td:first-child { font-family: var(--text); font-weight: 500; color: var(--grey); }
+  .side .btn { width: 100%; margin-top: 18px; }
+  .fine { font-size: 13px; color: var(--grey); margin: 12px 0 0; }
+  .linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--blue); text-decoration: underline; cursor: pointer; }
+  .linkbtn:disabled { opacity: .4; cursor: default; }
+  .side .dark { background: var(--night); color: #fff; }
+  .side .dark .eyebrow { color: var(--blue-on-dark); }
+  .side .dark p { color: rgba(255, 255, 255, .66); font-size: 15px; }
+  .side .dark pre { margin: 4px 0 0; padding: 14px 16px; background: var(--night-2); border-radius: 12px; font: 12.5px/1.6 var(--mono); color: #fff; overflow-x: auto; }
+  .side .dark a { color: #fff; font-weight: 600; text-decoration: underline; }
+
+  #finale { margin-top: 14px; background: var(--blue); color: #fff; border-radius: 24px; padding: clamp(32px, 4vw, 48px); display: grid; gap: 14px; justify-items: start; }
+  #finale .eyebrow { color: #fff; opacity: .75; }
+  #finale h2 { font-size: clamp(30px, 3.4vw, 46px); letter-spacing: -.03em; line-height: 1.04; }
+  #finale p { color: rgba(255, 255, 255, .78); max-width: 60ch; }
+
+  /* the headline is one sentence a line, and stays clear of the blocks in the picture */
+  @media (min-width: 761px) {
+    .pg-playground .ph h1 { font-size: clamp(44px, 5vw, 76px); }
+    .pg-playground .ph h1 .l { display: block; }
+  }
+  @media (max-width: 1100px) {
+    .pg-grid { grid-template-columns: minmax(0, 1fr); }
+    .side { position: static; }
+  }
+  @media (max-width: 760px) {
+    .step { padding: 22px 20px 24px; border-radius: 20px; }
+    .step .head { gap: 12px; }
+    .step .head .num { width: 32px; height: 32px; font-size: 13px; }
+    .step h3 { font-size: 19px; }
+    .step .lead, .controls, .status, .out, details.code { margin-left: 0; }
+    .controls .btn { flex: 1 1 auto; }
+    .field { flex: 1 1 160px; }
+    .kv > span { min-width: 112px; }
+    .who b { min-width: 96px; }
+    .chapter { padding-top: 44px; }
+  }
+</style>
+</head>
+<body class="kit pg-playground">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="mark" viewBox="140 140 190.36 400"><path fill-rule="evenodd" d="M270.68 286.92L274.9 286.77L278.25 287.71L304.41 302.65L308.67 305.35L313.35 309.43L317.61 314.6L320.59 319.77L321.87 322.81L323.06 326.46L324 331.03L324.4 336.81L323.12 444.79L323.03 447.22L322.45 451.48L321.51 455.44L320.62 458.17L317.61 464.56L314.54 469.13L309.58 474.45L305.02 478.04L210.42 534.89L206.77 536.75L201.6 538.6L199.16 539.21L194.6 539.85L188.82 540L186.39 539.76L181.52 538.87L176.96 537.38L173.61 535.86L156.58 526.13L146.54 520.35L144.11 518.52L141.83 515.67L140.4 512.32L140.06 510.49L140 507.76L140.7 504.41L141.86 501.98L143.41 499.85L144.71 498.57L146.54 497.29L240.23 440.96L243.57 438.46L246.92 435.3L250.08 431.71L252.15 428.67L254.65 424.11L256.44 419.54L257.69 414.68L258.3 410.11L259.63 304.26L259.88 297.87L260.18 296.35L261.37 293.61L262.34 292.09L263.65 290.63L265.17 289.26L266.69 288.32L267.91 287.71ZM279.07 140L283.73 140.21L287.07 140.79L290.72 141.7L294.07 142.92L298.94 145.32L324.79 160.26L326.43 161.6L327.95 163.42L329.2 165.55L329.99 167.68L330.36 169.81L330.36 172.85L329.51 176.2L328.56 178.02L327.01 180.15L323.88 182.71L241.14 232.38L229.28 239.68L226.84 241.54L223.44 244.64L220.33 248.29L217.69 252.24L215.47 256.5L213.95 260.46L212.76 265.02L212.09 269.58L210.81 374.52L210.54 382.13L209.87 384.56L208.68 387L206.71 389.43L204.33 391.35L202.51 392.29L199.16 393.23L195.82 393.2L193.69 392.81L192.17 392.26L189.43 390.77L164.49 376.47L162.05 374.89L159.01 372.46L155.88 369.35L153.44 366.31L151.62 363.57L149.52 359.62L147.33 353.54L146.42 349.28L146.02 343.19L147.3 235.21L147.67 230.04L148.61 225.48L149.46 222.74L151.32 218.17L152.78 215.44L154.97 212.09L157.06 209.35L161.44 205L163.27 203.48L166.92 201.02L260.61 144.75L264.26 142.98L269.73 141.16L275.21 140.21Z"/></symbol>
+  <symbol id="eusd-tk" viewBox="102.4 102.4 819.2 819.2"><circle cx="512" cy="512" r="409.6" fill="#1315FF"/><path fill="#fff" fill-rule="evenodd" d="M184.32 512A327.68 327.68 0 1 0 839.68 512A327.68 327.68 0 1 0 184.32 512ZM221.18 512A290.82 290.82 0 1 0 802.82 512A290.82 290.82 0 1 0 221.18 512Z"/><path fill="#fff" d="M625.35 584.53Q625.35 621.02 603.00 644.74Q580.65 668.46 541.88 674.84L541.88 674.84Q539.60 675.76 539.60 677.58L539.60 677.58L540.05 707.23Q540.05 709.51 538.46 711.11Q536.86 712.70 534.58 712.70L534.58 712.70L488.96 712.70Q486.68 712.70 485.09 711.11Q483.49 709.51 483.49 707.23L483.49 707.23L483.95 677.12Q483.95 675.30 481.67 674.39L481.67 674.39Q442.89 666.63 420.77 642.46Q398.65 618.28 398.65 581.79L398.65 581.79L398.65 571.76Q398.65 569.47 400.24 567.88Q401.84 566.28 404.12 566.28L404.12 566.28L453.39 566.28Q455.67 566.28 457.26 567.88Q458.86 569.47 458.86 571.76L458.86 571.76L458.86 578.60Q458.86 596.84 474.82 609.39Q490.79 621.93 518.61 621.93L518.61 621.93Q541.88 621.93 553.05 611.67Q564.23 601.40 564.23 586.35L564.23 586.35Q564.23 575.40 557.39 567.88Q550.54 560.35 538.46 554.65Q526.37 548.95 500.37 538.91L500.37 538.91Q470.72 528.42 450.65 517.47Q430.58 506.53 416.67 487.60Q402.75 468.67 402.75 440.84L402.75 440.84Q402.75 405.72 423.96 382.68Q445.17 359.65 481.21 352.81L481.21 352.81Q483.49 351.89 483.49 350.07L483.49 350.07L482.58 316.77Q482.58 314.49 484.18 312.89Q485.77 311.30 488.05 311.30L488.05 311.30L533.67 311.30Q535.95 311.30 537.54 312.89Q539.14 314.49 539.14 316.77L539.14 316.77L538.68 350.98Q538.68 352.81 540.97 353.72L540.97 353.72Q578.83 361.47 601.18 386.79Q623.53 412.10 623.53 448.60L623.53 448.60L623.53 455.44Q623.53 457.72 621.93 459.32Q620.33 460.91 618.05 460.91L618.05 460.91L568.33 460.91Q566.05 460.91 564.46 459.32Q562.86 457.72 562.86 455.44L562.86 455.44L562.86 451.79Q562.86 432.63 547.81 419.17Q532.75 405.72 506.75 405.72L506.75 405.72Q486.23 405.72 474.82 414.84Q463.42 423.96 463.42 439.93L463.42 439.93Q463.42 451.33 470.03 459.09Q476.65 466.84 489.88 473.23Q503.11 479.61 530.93 489.65L530.93 489.65Q561.49 501.05 579.28 510.18Q597.07 519.30 611.21 537.54Q625.35 555.79 625.35 584.53L625.35 584.53Z"/></symbol>
+  <symbol id="arr" viewBox="0 0 24 24"><path d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="ext" viewBox="0 0 24 24"><path d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <!-- Icons: Heroicons (heroicons.com) by Tailwind Labs, MIT License. -->
+  <symbol id="i-arrow-left-right" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"/></symbol>
+  <symbol id="i-braces" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5"/></symbol>
+  <symbol id="i-briefcase" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 14.15v4.25c0 1.094-.787 2.036-1.872 2.18-2.087.277-4.216.42-6.378.42s-4.291-.143-6.378-.42c-1.085-.144-1.872-1.086-1.872-2.18v-4.25m16.5 0a2.18 2.18 0 0 0 .75-1.661V8.706c0-1.081-.768-2.015-1.837-2.175a48.114 48.114 0 0 0-3.413-.387m4.5 8.006c-.194.165-.42.295-.673.38A23.978 23.978 0 0 1 12 15.75c-2.648 0-5.195-.429-7.577-1.22a2.016 2.016 0 0 1-.673-.38m0 0A2.18 2.18 0 0 1 3 12.489V8.706c0-1.081.768-2.015 1.837-2.175a48.111 48.111 0 0 1 3.413-.387m7.5 0V5.25A2.25 2.25 0 0 0 13.5 3h-3a2.25 2.25 0 0 0-2.25 2.25v.894m7.5 0a48.667 48.667 0 0 0-7.5 0M12 12.75h.008v.008H12v-.008Z"/></symbol>
+  <symbol id="i-building-2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Z"/></symbol>
+  <symbol id="i-chart-candlestick" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/></symbol>
+  <symbol id="i-circle-help" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></symbol>
+  <symbol id="i-coins" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 0 0-3.7-3.7 48.678 48.678 0 0 0-7.324 0 4.006 4.006 0 0 0-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 0 0 3.7 3.7 48.656 48.656 0 0 0 7.324 0 4.006 4.006 0 0 0 3.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3-3 3"/></symbol>
+  <symbol id="i-cookie" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75"/></symbol>
+  <symbol id="i-credit-card" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Z"/></symbol>
+  <symbol id="i-eeur" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.25 7.756a4.5 4.5 0 1 0 0 8.488M7.5 10.5h5.25m-5.25 3h5.25M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></symbol>
+  <symbol id="i-eusd" viewBox="107.5 107.5 809 809"><path fill="currentColor" stroke="none" fill-rule="evenodd" d="M184.32 512A327.68 327.68 0 1 0 839.68 512A327.68 327.68 0 1 0 184.32 512ZM221.18 512A290.82 290.82 0 1 0 802.82 512A290.82 290.82 0 1 0 221.18 512ZM625.35 584.53Q625.35 621.02 603.00 644.74Q580.65 668.46 541.88 674.84L541.88 674.84Q539.60 675.76 539.60 677.58L539.60 677.58L540.05 707.23Q540.05 709.51 538.46 711.11Q536.86 712.70 534.58 712.70L534.58 712.70L488.96 712.70Q486.68 712.70 485.09 711.11Q483.49 709.51 483.49 707.23L483.49 707.23L483.95 677.12Q483.95 675.30 481.67 674.39L481.67 674.39Q442.89 666.63 420.77 642.46Q398.65 618.28 398.65 581.79L398.65 581.79L398.65 571.76Q398.65 569.47 400.24 567.88Q401.84 566.28 404.12 566.28L404.12 566.28L453.39 566.28Q455.67 566.28 457.26 567.88Q458.86 569.47 458.86 571.76L458.86 571.76L458.86 578.60Q458.86 596.84 474.82 609.39Q490.79 621.93 518.61 621.93L518.61 621.93Q541.88 621.93 553.05 611.67Q564.23 601.40 564.23 586.35L564.23 586.35Q564.23 575.40 557.39 567.88Q550.54 560.35 538.46 554.65Q526.37 548.95 500.37 538.91L500.37 538.91Q470.72 528.42 450.65 517.47Q430.58 506.53 416.67 487.60Q402.75 468.67 402.75 440.84L402.75 440.84Q402.75 405.72 423.96 382.68Q445.17 359.65 481.21 352.81L481.21 352.81Q483.49 351.89 483.49 350.07L483.49 350.07L482.58 316.77Q482.58 314.49 484.18 312.89Q485.77 311.30 488.05 311.30L488.05 311.30L533.67 311.30Q535.95 311.30 537.54 312.89Q539.14 314.49 539.14 316.77L539.14 316.77L538.68 350.98Q538.68 352.81 540.97 353.72L540.97 353.72Q578.83 361.47 601.18 386.79Q623.53 412.10 623.53 448.60L623.53 448.60L623.53 455.44Q623.53 457.72 621.93 459.32Q620.33 460.91 618.05 460.91L618.05 460.91L568.33 460.91Q566.05 460.91 564.46 459.32Q562.86 457.72 562.86 455.44L562.86 455.44L562.86 451.79Q562.86 432.63 547.81 419.17Q532.75 405.72 506.75 405.72L506.75 405.72Q486.23 405.72 474.82 414.84Q463.42 423.96 463.42 439.93L463.42 439.93Q463.42 451.33 470.03 459.09Q476.65 466.84 489.88 473.23Q503.11 479.61 530.93 489.65L530.93 489.65Q561.49 501.05 579.28 510.18Q597.07 519.30 611.21 537.54Q625.35 555.79 625.35 584.53L625.35 584.53Z"/></symbol>
+  <symbol id="i-file-text" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m20.893 13.393-1.135-1.135a2.252 2.252 0 0 1-.421-.585l-1.08-2.16a.414.414 0 0 0-.663-.107.827.827 0 0 1-.812.21l-1.273-.363a.89.89 0 0 0-.738 1.595l.587.39c.59.395.674 1.23.172 1.732l-.2.2c-.212.212-.33.498-.33.796v.41c0 .409-.11.809-.32 1.158l-1.315 2.191a2.11 2.11 0 0 1-1.81 1.025 1.055 1.055 0 0 1-1.055-1.055v-1.172c0-.92-.56-1.747-1.414-2.089l-.655-.261a2.25 2.25 0 0 1-1.383-2.46l.007-.042a2.25 2.25 0 0 1 .29-.787l.09-.15a2.25 2.25 0 0 1 2.37-1.048l1.178.236a1.125 1.125 0 0 0 1.302-.795l.208-.73a1.125 1.125 0 0 0-.578-1.315l-.665-.332-.091.091a2.25 2.25 0 0 1-1.591.659h-.18c-.249 0-.487.1-.662.274a.931.931 0 0 1-1.458-1.137l1.411-2.353a2.25 2.25 0 0 0 .286-.76m11.928 9.869A9 9 0 0 0 8.965 3.525m11.928 9.868A9 9 0 1 1 8.965 3.525"/></symbol>
+  <symbol id="i-handshake" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM3 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 9.374 21c-2.331 0-4.512-.645-6.374-1.766Z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></symbol>
+  <symbol id="i-landmark" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0 0 12 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75Z"/></symbol>
+  <symbol id="i-life-buoy" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.712 4.33a9.027 9.027 0 0 1 1.652 1.306c.51.51.944 1.064 1.306 1.652M16.712 4.33l-3.448 4.138m3.448-4.138a9.014 9.014 0 0 0-9.424 0M19.67 7.288l-4.138 3.448m4.138-3.448a9.014 9.014 0 0 1 0 9.424m-4.138-5.976a3.736 3.736 0 0 0-.88-1.388 3.737 3.737 0 0 0-1.388-.88m2.268 2.268a3.765 3.765 0 0 1 0 2.528m-2.268-4.796a3.765 3.765 0 0 0-2.528 0m4.796 4.796c-.181.506-.475.982-.88 1.388a3.736 3.736 0 0 1-1.388.88m2.268-2.268 4.138 3.448m0 0a9.027 9.027 0 0 1-1.306 1.652c-.51.51-1.064.944-1.652 1.306m0 0-3.448-4.138m3.448 4.138a9.014 9.014 0 0 1-9.424 0m5.976-4.138a3.765 3.765 0 0 1-2.528 0m0 0a3.736 3.736 0 0 1-1.388-.88 3.737 3.737 0 0 1-.88-1.388m2.268 2.268L7.288 19.67m0 0a9.024 9.024 0 0 1-1.652-1.306 9.027 9.027 0 0 1-1.306-1.652m0 0 4.138-3.448M4.33 16.712a9.014 9.014 0 0 1 0-9.424m4.138 5.976a3.765 3.765 0 0 1 0-2.528m0 0c.181-.506.475-.982.88-1.388a3.736 3.736 0 0 1 1.388-.88m-2.268 2.268L4.33 7.288m6.406 1.18L7.288 4.33m0 0a9.024 9.024 0 0 0-1.652 1.306A9.025 9.025 0 0 0 4.33 7.288"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"/></symbol>
+  <symbol id="i-milestone" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498 4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 0 0-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0Z"/></symbol>
+  <symbol id="i-network" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.098 19.902a3.75 3.75 0 0 0 5.304 0l6.401-6.402M6.75 21A3.75 3.75 0 0 1 3 17.25V4.125C3 3.504 3.504 3 4.125 3h5.25c.621 0 1.125.504 1.125 1.125v4.072M6.75 21a3.75 3.75 0 0 0 3.75-3.75V8.197M6.75 21h13.125c.621 0 1.125-.504 1.125-1.125v-5.25c0-.621-.504-1.125-1.125-1.125h-4.072M10.5 8.197l2.88-2.88c.438-.439 1.15-.439 1.59 0l3.712 3.713c.44.44.44 1.152 0 1.59l-2.879 2.88M6.75 17.25h.008v.008H6.75v-.008Z"/></symbol>
+  <symbol id="i-refresh-cw" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></symbol>
+  <symbol id="i-scale" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.971Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.989 5.989 0 0 1-2.031.352 5.989 5.989 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.971Z"/></symbol>
+  <symbol id="i-shield-check" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"/></symbol>
+  <symbol id="i-trending-up" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18 9 11.25l4.306 4.306a11.95 11.95 0 0 1 5.814-5.518l2.74-1.22m0 0-5.94-2.281m5.94 2.28-2.28 5.941"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z"/></symbol>
+  <symbol id="i-vault" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></symbol>
+</defs></svg>
+<header class="hdr" id="hdr" data-tone="light" data-bar="none">
+  <div class="wrap">
+    <a class="brand" href="https://softseco.com/" aria-label="Softseco home"><svg aria-hidden="true"><use href="#mark"/></svg></a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <button class="nt" type="button" data-mm="platform" aria-expanded="false" aria-controls="mm-platform">Platform</button>
+      <button class="nt" type="button" data-mm="solutions" aria-expanded="false" aria-controls="mm-solutions">Solutions</button>
+      <button class="nt" type="button" data-mm="partners" aria-expanded="false" aria-controls="mm-partners">Partners</button>
+      <button class="nt" type="button" data-mm="developer" aria-expanded="false" aria-controls="mm-developer">Developer</button>
+      <button class="nt" type="button" data-mm="resources" aria-expanded="false" aria-controls="mm-resources">Resources</button>
+      <a class="nl is-off" role="link" aria-disabled="true">Transparency</a>
+    </nav>
+    <div class="mm" id="mm">
+      <div class="mm-card">
+        <div class="mm-view">
+          <div class="mm-pane" id="mm-platform" role="group" aria-label="Platform">
+          <div class="mm-g"><h6 class="mm-h">Digital Assets</h6><ul style="--c:1;--r:2"><li><a class="mm-i" href="https://softseco.com/eusd"><svg class="mi" aria-hidden="true"><use href="#i-eusd"/></svg><b>eUSD <em>Planned</em></b><small>The confidential digital dollar</small></a></li><li><a class="mm-i is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-eeur"/></svg><b>eEUR <em>Planned</em></b><small>The confidential digital euro</small></a></li></ul></div>
+          <div class="mm-g"><h6 class="mm-h">Digital Asset Services</h6><ul style="--c:1;--r:2"><li><a class="mm-i is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-refresh-cw"/></svg><b>Mint <em>Planned</em></b><small>Issue and redeem at par, for verified institutions</small></a></li><li><a class="mm-i is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-arrow-left-right"/></svg><b>Forex <em>Planned</em></b><small>eUSD and eEUR, through a licensed partner</small></a></li></ul></div>
+        </div>
+          <div class="mm-pane" id="mm-solutions" role="group" aria-label="Solutions">
+          <div class="mm-g"><h6 class="mm-h">Impact</h6><ul style="--c:1;--r:3"><li><a class="mm-i" href="https://softseco.com/economic"><svg class="mi" aria-hidden="true"><use href="#i-trending-up"/></svg><b>Economic</b><small>Cheaper, faster payments</small></a></li><li><a class="mm-i" href="https://softseco.com/social"><svg class="mi" aria-hidden="true"><use href="#i-users"/></svg><b>Social</b><small>Privacy for everyday payments</small></a></li><li><a class="mm-i" href="https://softseco.com/institutional"><svg class="mi" aria-hidden="true"><use href="#i-building-2"/></svg><b>Institutional</b><small>Compliance built into the token</small></a></li></ul></div>
+          <div class="mm-g"><h6 class="mm-h">Use Cases</h6><ul style="--c:2;--r:3"><li><a class="mm-i" href="https://softseco.com/payments"><svg class="mi" aria-hidden="true"><use href="#i-credit-card"/></svg><b>Payments</b><small>Pay without showing the amount</small></a></li><li><a class="mm-i" href="https://softseco.com/treasury"><svg class="mi" aria-hidden="true"><use href="#i-vault"/></svg><b>Treasury</b><small>Move company funds privately</small></a></li><li><a class="mm-i" href="https://softseco.com/trading"><svg class="mi" aria-hidden="true"><use href="#i-chart-candlestick"/></svg><b>Trading</b><small>Settle trades privately</small></a></li><li><a class="mm-i" href="https://softseco.com/solutions-forex"><svg class="mi" aria-hidden="true"><use href="#i-coins"/></svg><b>Forex</b><small>Dollar and euro on one rail</small></a></li><li><a class="mm-i" href="https://softseco.com/banking"><svg class="mi" aria-hidden="true"><use href="#i-landmark"/></svg><b>Banking</b><small>Private rails for banks</small></a></li><li><a class="mm-i" href="https://softseco.com/global-access"><svg class="mi" aria-hidden="true"><use href="#i-globe"/></svg><b>Global Access</b><small>Digital dollars across borders</small></a></li></ul></div>
+        </div>
+          <div class="mm-pane" id="mm-partners" role="group" aria-label="Partners">
+          <div class="mm-g"><h6 class="mm-h">Partners</h6><ul style="--c:1;--r:2"><li><a class="mm-i is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-network"/></svg><b>Partner Network <em>Soon</em></b><small>Ramps, custodians, wallets</small></a></li><li><a class="mm-i" href="https://softseco.com/become-a-partner"><svg class="mi" aria-hidden="true"><use href="#i-handshake"/></svg><b>Become a partner</b><small>Start a collaboration</small></a></li></ul></div>
+        </div>
+          <div class="mm-pane" id="mm-developer" role="group" aria-label="Developer">
+          <div class="mm-g"><h6 class="mm-h">Developer</h6><ul style="--c:1;--r:2"><li><a class="mm-i" href="https://github.com/softseco/arcantis"><svg class="mi" aria-hidden="true"><use href="#i-braces"/></svg><b>Arcantis</b><small>SDK for confidential transfers</small></a></li><li><a class="mm-i" href="https://github.com/softseco/vigilantis"><svg class="mi" aria-hidden="true"><use href="#i-shield-check"/></svg><b>Vigilantis</b><small>Checks on every transfer</small></a></li></ul></div>
+        </div>
+          <div class="mm-pane" id="mm-resources" role="group" aria-label="Resources">
+          <div class="mm-g"><h6 class="mm-h">Company</h6><ul style="--c:1;--r:4"><li><a class="mm-i" href="https://softseco.com/about"><svg class="mi" aria-hidden="true"><use href="#i-info"/></svg><b>About</b><small>Who we are and why we build</small></a></li><li><a class="mm-i" href="https://softseco.com/roadmap"><svg class="mi" aria-hidden="true"><use href="#i-milestone"/></svg><b>Roadmap</b><small>From developer tools to eUSD</small></a></li><li><a class="mm-i is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-briefcase"/></svg><b>Careers <em>Soon</em></b><small>Work with Softseco</small></a></li><li><a class="mm-i" href="https://softseco.com/contact"><svg class="mi" aria-hidden="true"><use href="#i-mail"/></svg><b>Contact</b><small>Get in touch</small></a></li></ul></div>
+          <div class="mm-g"><h6 class="mm-h">Material</h6><ul style="--c:1;--r:3"><li><a class="mm-i" href="https://softseco.com/faq"><svg class="mi" aria-hidden="true"><use href="#i-circle-help"/></svg><b>FAQ</b><small>Common questions, answered</small></a></li><li><a class="mm-i" href="https://softseco.com/documentation"><svg class="mi" aria-hidden="true"><use href="#i-file-text"/></svg><b>Documentation</b><small>Whitepaper and specs</small></a></li><li><a class="mm-i is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-palette"/></svg><b>Brand <em>Soon</em></b><small>Logos, colours and guidelines</small></a></li></ul></div>
+          <div class="mm-g"><h6 class="mm-h">Support</h6><ul style="--c:1;--r:4"><li><a class="mm-i is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-life-buoy"/></svg><b>Help Center <em>Soon</em></b><small>Guides and answers</small></a></li><li><a class="mm-i" href="https://softseco.com/privacy"><svg class="mi" aria-hidden="true"><use href="#i-lock"/></svg><b>Privacy Policy</b><small>How we handle your data</small></a></li><li><a class="mm-i is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-scale"/></svg><b>Legal <em>Soon</em></b><small>Company and licences</small></a></li><li><a class="mm-i" href="https://softseco.com/cookies"><svg class="mi" aria-hidden="true"><use href="#i-cookie"/></svg><b>Cookie Notice</b><small>The cookies this site uses</small></a></li></ul></div>
+        </div>
+        </div>
+      </div>
+    </div>
+    <div class="hdr-r">
+      <div class="lang-wrap">
+        <button class="globe" id="globe" aria-label="Language" aria-haspopup="true" aria-expanded="false" aria-controls="lang"><svg viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-7-.5-14.5T799-507q-5 29-27 48t-52 19h-80q-33 0-56.5-23.5T560-520v-40H400v-80q0-33 23.5-56.5T480-720h40q0-23 12.5-40.5T563-789q-20-5-40.5-8t-42.5-3q-134 0-227 93t-93 227h200q66 0 113 47t47 113v40H400v110q20 5 39.5 7.5T480-160Z"/></svg></button>
+        <div class="lang" id="lang" role="dialog" aria-label="Choose your language" hidden>
+          <div class="lt">Choose your language</div>
+          <ul>
+            <li><button class="opt" type="button" aria-current="true"><div><b>English</b><span>Global</span></div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></li>
+            <li><button class="opt" type="button" aria-disabled="true" title="Coming soon"><div><b>Polski</b><span>Poland</span></div></button></li>
+            <li><button class="opt" type="button" aria-disabled="true" title="Coming soon"><div><b>Deutsch</b><span>Germany</span></div></button></li>
+            <li><button class="opt" type="button" aria-disabled="true" title="Coming soon"><div><b>Español</b><span>Spain</span></div></button></li>
+            <li><button class="opt" type="button" aria-disabled="true" title="Coming soon"><div><b>Français</b><span>France</span></div></button></li>
+          </ul>
+        </div>
+      </div>
+      <a class="btn trade" href="https://softseco.com/trade">Trade</a>
+      <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="sheet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path id="menuIco" d="M3.75 9h16.5m-16.5 6.75h16.5"/></svg></button>
+    </div>
+  </div>
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheet-in"><div class="wrap">
+      <details><summary>Platform<svg aria-hidden="true"><use href="#i-chev"/></svg></summary><div class="acc-b"><h6>Digital Assets</h6><a href="https://softseco.com/eusd"><svg class="mi" aria-hidden="true"><use href="#i-eusd"/></svg><span>eUSD <em>Planned</em></span></a><a class="is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-eeur"/></svg><span>eEUR <em>Planned</em></span></a><h6>Digital Asset Services</h6><a class="is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-refresh-cw"/></svg><span>Mint <em>Planned</em></span></a><a class="is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-arrow-left-right"/></svg><span>Forex <em>Planned</em></span></a></div></details>
+      <details><summary>Solutions<svg aria-hidden="true"><use href="#i-chev"/></svg></summary><div class="acc-b"><h6>Impact</h6><a href="https://softseco.com/economic"><svg class="mi" aria-hidden="true"><use href="#i-trending-up"/></svg><span>Economic</span></a><a href="https://softseco.com/social"><svg class="mi" aria-hidden="true"><use href="#i-users"/></svg><span>Social</span></a><a href="https://softseco.com/institutional"><svg class="mi" aria-hidden="true"><use href="#i-building-2"/></svg><span>Institutional</span></a><h6>Use Cases</h6><a href="https://softseco.com/payments"><svg class="mi" aria-hidden="true"><use href="#i-credit-card"/></svg><span>Payments</span></a><a href="https://softseco.com/treasury"><svg class="mi" aria-hidden="true"><use href="#i-vault"/></svg><span>Treasury</span></a><a href="https://softseco.com/trading"><svg class="mi" aria-hidden="true"><use href="#i-chart-candlestick"/></svg><span>Trading</span></a><a href="https://softseco.com/solutions-forex"><svg class="mi" aria-hidden="true"><use href="#i-coins"/></svg><span>Forex</span></a><a href="https://softseco.com/banking"><svg class="mi" aria-hidden="true"><use href="#i-landmark"/></svg><span>Banking</span></a><a href="https://softseco.com/global-access"><svg class="mi" aria-hidden="true"><use href="#i-globe"/></svg><span>Global Access</span></a></div></details>
+      <details><summary>Partners<svg aria-hidden="true"><use href="#i-chev"/></svg></summary><div class="acc-b"><h6>Partners</h6><a class="is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-network"/></svg><span>Partner Network <em>Soon</em></span></a><a href="https://softseco.com/become-a-partner"><svg class="mi" aria-hidden="true"><use href="#i-handshake"/></svg><span>Become a partner</span></a></div></details>
+      <details><summary>Developer<svg aria-hidden="true"><use href="#i-chev"/></svg></summary><div class="acc-b"><h6>Developer</h6><a href="https://github.com/softseco/arcantis"><svg class="mi" aria-hidden="true"><use href="#i-braces"/></svg><span>Arcantis</span></a><a href="https://github.com/softseco/vigilantis"><svg class="mi" aria-hidden="true"><use href="#i-shield-check"/></svg><span>Vigilantis</span></a></div></details>
+      <details><summary>Resources<svg aria-hidden="true"><use href="#i-chev"/></svg></summary><div class="acc-b"><h6>Company</h6><a href="https://softseco.com/about"><svg class="mi" aria-hidden="true"><use href="#i-info"/></svg><span>About</span></a><a href="https://softseco.com/roadmap"><svg class="mi" aria-hidden="true"><use href="#i-milestone"/></svg><span>Roadmap</span></a><a class="is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-briefcase"/></svg><span>Careers <em>Soon</em></span></a><a href="https://softseco.com/contact"><svg class="mi" aria-hidden="true"><use href="#i-mail"/></svg><span>Contact</span></a><h6>Material</h6><a href="https://softseco.com/faq"><svg class="mi" aria-hidden="true"><use href="#i-circle-help"/></svg><span>FAQ</span></a><a href="https://softseco.com/documentation"><svg class="mi" aria-hidden="true"><use href="#i-file-text"/></svg><span>Documentation</span></a><a class="is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-palette"/></svg><span>Brand <em>Soon</em></span></a><h6>Support</h6><a class="is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-life-buoy"/></svg><span>Help Center <em>Soon</em></span></a><a href="https://softseco.com/privacy"><svg class="mi" aria-hidden="true"><use href="#i-lock"/></svg><span>Privacy Policy</span></a><a class="is-off" role="link" aria-disabled="true"><svg class="mi" aria-hidden="true"><use href="#i-scale"/></svg><span>Legal <em>Soon</em></span></a><a href="https://softseco.com/cookies"><svg class="mi" aria-hidden="true"><use href="#i-cookie"/></svg><span>Cookie Notice</span></a></div></details>
+      <a class="is-off" role="link" aria-disabled="true"><span>Transparency <em>Soon</em></span><svg aria-hidden="true"><use href="#arr"/></svg></a>
+      <a class="btn btn-blue" href="https://softseco.com/trade">Trade</a>
+    </div></div>
+  </div>
+</header>
+
+<div class="page-body">
+<main id="main">
+  <section class="ph on-blue" data-bar="light" data-tone="light" style="--pos:50% 50%;--mpos:50% 50%">
+    <picture><source media="(max-width:760px)" srcset="assets/hero-m.jpg"><img src="assets/hero.jpg" alt="A white token with the Softseco mark, partly behind frosted glass, and ten cubes stepping up to it, on a blue background"></picture>
+    <div class="copy">
+      <span class="tag">Live on Solana devnet</span>
+      <h1><span class="l">Private amounts.</span> <span class="l">Public rules.</span></h1>
+      <p>Run a confidential token from start to finish, in this page. Arcantis keeps every amount encrypted, Vigilantis enforces the issuer's rules on every transfer, and an auditor can still read it all.</p>
+      <div class="acts"><a class="btn btn-white" href="#run">Start</a><a class="btn btn-line" href="https://github.com/softseco/arcantis/tree/main/playground" target="_blank" rel="noopener">Read the code</a></div>
+    </div>
+  </section>
+
+  <section class="sec" id="run">
+    <div class="wrap">
+      <div class="sec-head rv">
+        <h2>Ten steps, one token.</h2>
+        <p class="lead">Every step is a real devnet transaction. The page makes throwaway keys and keeps them in this browser: nothing to install, no wallet extension. Devnet SOL is free, and the test tokens have no value.</p>
+        <div class="pills">
+          <span class="pill live">Arcantis <span class="v">1.0.0-rc.1</span></span>
+          <span class="pill live">Vigilantis <span class="v" id="hook-version">1.0.0-rc.1</span></span>
+          <span class="pill">RPC <span class="v" id="rpc">api.devnet.solana.com</span></span>
+        </div>
+        <div id="ready">Loading the zero-knowledge module…</div>
+      </div>
+
+      <div class="pg-grid">
+        <ol class="steps">
+          <li class="chapter">
+            <div class="eyebrow">01 · Arcantis</div>
+            <h2>Private amounts</h2>
+            <p>A Token-2022 dollar whose balances and transfer amounts are encrypted on-chain. Zero-knowledge proofs show each transfer is valid without revealing it.</p>
+          </li>
+
+          <li class="step" data-step="1" data-state="ready">
+            <div class="head"><span class="num">1</span><h3>Get devnet SOL</h3><span class="pill live">Done</span></div>
+            <p class="lead">Your throwaway wallet pays the fees and rent for everyone in this run, about 0.05 SOL.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="1" disabled>Airdrop 1 SOL</button><button class="btn btn-line dark" id="copy" type="button">Copy address</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The call</summary><pre><code>await rpc.requestAirdrop(you.address, lamports(1_000_000_000n)).send();
+<span class="c">// refused? get devnet SOL at faucet.solana.com</span></code></pre></details>
+          </li>
+
+          <li class="step" data-step="2" data-state="locked">
+            <div class="head"><span class="num">2</span><h3>Create the token</h3><span class="pill live">Done</span></div>
+            <p class="lead">One mint carries everything: confidential transfers with an auditor key, and Vigilantis as its transfer hook, freeze authority and pause authority. Its policy turns the blocklist on.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="2" disabled>Create the token</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The calls</summary><pre><code><span class="c">// Token-2022 extensions: ConfidentialTransferMint { auditorElgamalPubkey },</span>
+<span class="c">// TransferHook { Vigilantis }, PausableConfig { Vigilantis }; freeze authority: Vigilantis</span>
+const auditorKeypair = await deriveAuditorElgamalKeypair(auditor);   <span class="c">// @softseco/arcantis</span>
+const auditorElgamalPubkey = getAuditorElgamalPubkey(auditorKeypair);
+
+<span class="c">// the rules, with @softseco/vigilantis</span>
+await vigilantis.initializeExtraAccountMetaList(mint);
+await vigilantis.initializePolicy({ mint, allowlist: false, blocklist: true,
+                                    maxTransferAmount: 0, allowConfidential: true });</code></pre></details>
+          </li>
+
+          <li class="step" data-step="3" data-state="locked">
+            <div class="head"><span class="num">3</span><h3>Open accounts and deposit</h3><span class="pill live">Done</span></div>
+            <p class="lead">You, Bob and Mallory each get a token account set up for confidential transfers. You mint 1,000 test dollars and move them into your confidential balance. From here on the chain holds only ciphertext for it.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="3" disabled>Open and deposit</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>await configureAccount({ rpc, rpcSubscriptions, payer: you, owner: bob, mint });
+await deposit({ rpc, rpcSubscriptions, payer: you, owner: you, mint,
+                amount: 1_000_000_000n, decimals: 6 });
+await applyPendingBalance({ rpc, rpcSubscriptions, payer: you, owner: you, mint });</code></pre></details>
+          </li>
+
+          <li class="step" data-step="4" data-state="locked">
+            <div class="head"><span class="num">4</span><h3>Pay Bob privately</h3><span class="pill live">Done</span></div>
+            <p class="lead">The amount is encrypted three times, to you, to Bob and to the auditor. Token-2022 calls Vigilantis on the way, and Vigilantis checks who sends and who receives. Bob needs no SOL: you pay the fees.</p>
+            <div class="controls"><label class="field"><input id="amount" inputmode="decimal" value="250" aria-label="Amount to send to Bob"><span>to Bob</span></label><button class="btn btn-blue" data-run="4" disabled>Send</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK call</summary><pre><code>await transfer({ rpc, rpcSubscriptions, payer: you, owner: you, mint,
+                 destinationOwner: bob.address, amount: 250_000_000n,
+                 auditorElgamalPubkey });
+<span class="c">// the SDK finds the hook's accounts by itself</span></code></pre></details>
+          </li>
+
+          <li class="step" data-step="5" data-state="locked">
+            <div class="head"><span class="num">5</span><h3>See who can read it</h3><span class="pill live">Done</span></div>
+            <p class="lead">Three keys can open the amount. Everyone else sees two addresses and a ciphertext.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="5" disabled>Decrypt</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>await decryptBalance({ rpc, owner: you, mint });                                <span class="c">// you</span>
+await decryptBalance({ rpc, owner: bob, mint });                                <span class="c">// Bob</span>
+await decryptTransferAmountAsAuditor({ rpc, signature, auditorKeypair, mint }); <span class="c">// the auditor</span></code></pre></details>
+          </li>
+
+          <li class="step" data-step="6" data-state="locked">
+            <div class="head"><span class="num">6</span><h3>Withdraw to public</h3><span class="pill live">Done</span></div>
+            <p class="lead">Bob moves half of what he received to his public balance. He proves he has enough without showing how much he had.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="6" disabled>Withdraw half</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK call</summary><pre><code>await withdraw({ rpc, rpcSubscriptions, payer: you, owner: bob, mint,
+                 amount: 125_000_000n, decimals: 6 });</code></pre></details>
+          </li>
+
+          <li class="chapter">
+            <div class="eyebrow">02 · Vigilantis</div>
+            <h2>Public rules</h2>
+            <p>You are the issuer. Each action below records a reason code and a case reference on-chain. The case number itself stays private: the chain stores a salted hash of it. None of these actions can move anyone's tokens.</p>
+          </li>
+
+          <li class="step" data-step="7" data-state="locked">
+            <div class="head"><span class="num">7</span><h3>Block a wallet</h3><span class="pill live">Done</span></div>
+            <p class="lead">Mallory goes on the blocklist for sanctions, case DEMO-001. Then you try to pay her 50.00, confidentially. Vigilantis cannot see the amount, but it can see who gets paid.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="7" disabled>Block and pay Mallory</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>const salt = process.env.VIGILANTIS_CASE_SALT;   <span class="c">// the issuer's secret</span>
+await vigilantis.blockWallet(mint, mallory, {
+  reasonCode: ENFORCEMENT_REASONS.sanctions, caseRef: caseRef("DEMO-001", salt) });
+<span class="c">// or: vigilantis block add &lt;mint&gt; &lt;wallet&gt; --reason sanctions --case DEMO-001</span>
+
+await transfer({ ..., destinationOwner: mallory.address });   <span class="c">// refused: RecipientBlocked</span></code></pre></details>
+          </li>
+
+          <li class="step" data-step="8" data-state="locked">
+            <div class="head"><span class="num">8</span><h3>Freeze an account</h3><span class="pill live">Done</span></div>
+            <p class="lead">Bob's account is frozen for fraud, case DEMO-002, and he tries to pay you 10.00 from his public balance. Then the case is closed and his account is thawed. His balance never moves.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="8" disabled>Freeze, pay, thaw</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>await vigilantis.freezeTokenAccount(mint, bobToken, {
+  reasonCode: ENFORCEMENT_REASONS.fraud, caseRef: caseRef("DEMO-002", salt) });
+await vigilantis.transfer({ mint, amount: 10_000_000n, decimals: 6,
+                           owner: bob, destinationOwner: you });   <span class="c">// refused: AccountFrozen</span>
+<span class="c">// a confidential payment Arcantis refuses before it builds the proofs</span>
+await vigilantis.thawTokenAccount(mint, bobToken, {
+  reasonCode: ENFORCEMENT_REASONS.caseClosed, caseRef: caseRef("DEMO-002", salt) });</code></pre></details>
+          </li>
+
+          <li class="step" data-step="9" data-state="locked">
+            <div class="head"><span class="num">9</span><h3>Pause the token</h3><span class="pill live">Done</span></div>
+            <p class="lead">An internal review, case DEMO-003, pauses every transfer of the token at once, confidential ones included. Bob tries to pay you 10.00, then the review ends and transfers resume.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="9" disabled>Pause, pay, resume</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>await vigilantis.pause(mint, {
+  reasonCode: ENFORCEMENT_REASONS.internalReview, caseRef: caseRef("DEMO-003", salt) });
+await vigilantis.transfer({ mint, amount: 10_000_000n, decimals: 6,
+                           owner: bob, destinationOwner: you });   <span class="c">// refused: MintPaused</span>
+await vigilantis.resume(mint, {
+  reasonCode: ENFORCEMENT_REASONS.caseClosed, caseRef: caseRef("DEMO-003", salt) });</code></pre></details>
+          </li>
+
+          <li class="chapter">
+            <div class="eyebrow">03 · Oversight</div>
+            <h2>The auditor's report</h2>
+            <p>The auditor key opens every amount of this token, and nothing else. A supervisor or an accountant gets the full picture without the amounts ever being public.</p>
+          </li>
+
+          <li class="step" data-step="10" data-state="locked">
+            <div class="head"><span class="num">10</span><h3>Build the report</h3><span class="pill live">Done</span></div>
+            <p class="lead">Every deposit, transfer and withdraw of the token, read from the chain and decrypted with the auditor's key. Download it as CSV or JSON.</p>
+            <div class="controls"><button class="btn btn-blue" data-run="10" disabled>Build the report</button></div>
+            <div class="status" aria-live="polite"></div>
+            <div class="out"></div>
+            <details class="code"><summary>The SDK calls</summary><pre><code>const activity = await listConfidentialActivity({ rpc, mint, auditorKeypair });
+confidentialActivityToCsv(activity, { decimals: 6 });
+<span class="c">// or: arcantis audit-report --mint &lt;mint&gt; --format json</span></code></pre></details>
+          </li>
+        </ol>
+
+        <aside class="side">
+          <div class="kc">
+            <div class="eyebrow">Keys in this browser</div>
+            <h3>Throwaway devnet wallets</h3>
+            <div>
+              <div class="row"><span>You<small>issuer and payer</small></span><a id="addr-you" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span>Bob<small>holder</small></span><a id="addr-bob" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span>Mallory<small>blocked in step 7</small></span><a id="addr-mallory" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span>Auditor<small>holds the auditor key</small></span><a id="addr-auditor" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span>Token</span><a id="token" target="_blank" rel="noopener">not created yet</a></div>
+              <div class="row"><span>Your SOL</span><b id="sol">—</b></div>
+            </div>
+            <table class="bal">
+              <thead><tr><th></th><th>Public</th><th>Confidential</th></tr></thead>
+              <tbody>
+                <tr><td>You</td><td id="you-pub">—</td><td id="you-conf">—</td></tr>
+                <tr><td>Bob</td><td id="bob-pub">—</td><td id="bob-conf">—</td></tr>
+              </tbody>
+            </table>
+            <button class="btn btn-line dark" id="reset" type="button">Start a new run</button>
+            <p class="fine">A new token, Bob, Mallory and auditor. Your wallet and its SOL stay. <button class="linkbtn" id="restart" type="button">Use new keys instead</button></p>
+            <p class="fine">The keys live only in this browser's storage. Devnet only: never send real funds to these addresses.</p>
+          </div>
+          <div class="kc dark">
+            <div class="eyebrow">In your app</div>
+            <p>The same calls from Node or your own web app.</p>
+            <pre>npm install @softseco/arcantis
+npm install @softseco/vigilantis</pre>
+            <p><a href="https://github.com/softseco/arcantis#readme">Arcantis</a> · <a href="https://github.com/softseco/vigilantis#readme">Vigilantis</a></p>
+          </div>
+        </aside>
+      </div>
+
+      <div id="finale" hidden>
+        <div class="eyebrow">Done</div>
+        <h2>Every amount stayed private. Every rule held.</h2>
+        <p>The chain enforced the issuer's rules on payments nobody else could read, each with its reason on record, and the auditor still saw all of it.</p>
+        <button class="btn btn-white" id="again" type="button">Run it again</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec cta-sec">
+    <div class="wrap"><div class="cta blue rv" data-fx="cipher"><h2>Build on it.</h2><p>Arcantis and Vigilantis are source-available. Payments, payroll or treasury on Solana: open an issue, or write to hello@softseco.com.</p><div class="acts"><a class="btn btn-white" href="https://github.com/softseco/arcantis" target="_blank" rel="noopener">Arcantis on GitHub</a><a class="btn btn-line" href="https://github.com/softseco/vigilantis" target="_blank" rel="noopener">Vigilantis on GitHub</a></div></div></div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap ft-in">
+    <div class="ft-top">
+      <div class="ft-brand">
+        <a class="ft-logo" href="https://softseco.com/" aria-label="Softseco home"><svg viewBox="130 130 1695 420" aria-hidden="true"><path d="M270.68 286.92L274.9 286.77L278.25 287.71L304.41 302.65L308.67 305.35L313.35 309.43L317.61 314.6L320.59 319.77L321.87 322.81L323.06 326.46L324 331.03L324.4 336.81L323.12 444.79L323.03 447.22L322.45 451.48L321.51 455.44L320.62 458.17L317.61 464.56L314.54 469.13L309.58 474.45L305.02 478.04L210.42 534.89L206.77 536.75L201.6 538.6L199.16 539.21L194.6 539.85L188.82 540L186.39 539.76L181.52 538.87L176.96 537.38L173.61 535.86L156.58 526.13L146.54 520.35L144.11 518.52L141.83 515.67L140.4 512.32L140.06 510.49L140 507.76L140.7 504.41L141.86 501.98L143.41 499.85L144.71 498.57L146.54 497.29L240.23 440.96L243.57 438.46L246.92 435.3L250.08 431.71L252.15 428.67L254.65 424.11L256.44 419.54L257.69 414.68L258.3 410.11L259.63 304.26L259.88 297.87L260.18 296.35L261.37 293.61L262.34 292.09L263.65 290.63L265.17 289.26L266.69 288.32L267.91 287.71ZM279.07 140L283.73 140.21L287.07 140.79L290.72 141.7L294.07 142.92L298.94 145.32L324.79 160.26L326.43 161.6L327.95 163.42L329.2 165.55L329.99 167.68L330.36 169.81L330.36 172.85L329.51 176.2L328.56 178.02L327.01 180.15L323.88 182.71L241.14 232.38L229.28 239.68L226.84 241.54L223.44 244.64L220.33 248.29L217.69 252.24L215.47 256.5L213.95 260.46L212.76 265.02L212.09 269.58L210.81 374.52L210.54 382.13L209.87 384.56L208.68 387L206.71 389.43L204.33 391.35L202.51 392.29L199.16 393.23L195.82 393.2L193.69 392.81L192.17 392.26L189.43 390.77L164.49 376.47L162.05 374.89L159.01 372.46L155.88 369.35L153.44 366.31L151.62 363.57L149.52 359.62L147.33 353.54L146.42 349.28L146.02 343.19L147.3 235.21L147.67 230.04L148.61 225.48L149.46 222.74L151.32 218.17L152.78 215.44L154.97 212.09L157.06 209.35L161.44 205L163.27 203.48L166.92 201.02L260.61 144.75L264.26 142.98L269.73 141.16L275.21 140.21Z" fill-rule="evenodd"/><path d="M517.38 441.74Q493.65 441.74 475.94 435.01Q458.23 428.29 448.49 416.24Q438.75 404.20 438.75 388.97L438.75 388.97L438.75 385.43Q438.75 383.66 439.99 382.42Q441.23 381.18 443.00 381.18L443.00 381.18L482.32 381.18Q484.09 381.18 485.33 382.42Q486.57 383.66 486.57 385.43L486.57 385.43L486.57 385.79Q486.57 393.58 495.24 399.07Q503.92 404.56 517.02 404.56L517.02 404.56Q529.06 404.56 536.50 399.78Q543.94 394.99 543.94 387.91L543.94 387.91Q543.94 381.54 537.56 378.35Q531.19 375.16 516.67 371.62L516.67 371.62Q500.02 367.37 490.46 363.47L490.46 363.47Q467.79 355.68 454.34 344.35Q440.88 333.02 440.88 311.77L440.88 311.77Q440.88 285.56 461.24 270.15Q481.61 254.75 515.25 254.75L515.25 254.75Q537.92 254.75 554.92 262.01Q571.92 269.27 581.30 282.37Q590.69 295.47 590.69 312.12L590.69 312.12Q590.69 313.89 589.45 315.13Q588.21 316.37 586.44 316.37L586.44 316.37L548.54 316.37Q546.77 316.37 545.53 315.13Q544.29 313.89 544.29 312.12L544.29 312.12Q544.29 304.33 536.33 299.02Q528.36 293.70 515.25 293.70L515.25 293.70Q503.56 293.70 496.13 297.95Q488.69 302.20 488.69 309.64L488.69 309.64Q488.69 316.72 495.95 320.27Q503.21 323.81 520.21 327.70L520.21 327.70Q524.11 328.77 529.06 330.01Q534.02 331.25 539.69 333.02L539.69 333.02Q564.84 340.45 579.36 352.14Q593.88 363.83 593.88 386.14L593.88 386.14Q593.88 412.35 573.16 427.05Q552.44 441.74 517.38 441.74L517.38 441.74Z"/><path d="M702.96 442.10Q673.21 442.10 651.96 426.52Q630.71 410.93 622.92 384.02L622.92 384.02Q617.96 367.37 617.96 347.89L617.96 347.89Q617.96 327.00 622.92 310.35L622.92 310.35Q631.06 284.14 652.31 269.27Q673.56 254.39 703.31 254.39L703.31 254.39Q732.35 254.39 752.90 269.09Q773.44 283.79 781.94 310.00L781.94 310.00Q787.60 327.70 787.60 347.18L787.60 347.18Q787.60 366.31 782.65 382.95L782.65 382.95Q774.85 410.58 753.78 426.34Q732.71 442.10 702.96 442.10L702.96 442.10ZM702.96 399.24Q714.65 399.24 722.79 392.16Q730.94 385.08 734.48 372.68L734.48 372.68Q737.31 361.35 737.31 347.89L737.31 347.89Q737.31 333.02 734.48 322.75L734.48 322.75Q730.58 310.70 722.44 303.97Q714.29 297.25 702.60 297.25L702.60 297.25Q690.56 297.25 682.59 303.97Q674.63 310.70 671.08 322.75L671.08 322.75Q668.25 331.25 668.25 347.89L668.25 347.89Q668.25 363.83 670.73 372.68L670.73 372.68Q674.27 385.08 682.59 392.16Q690.92 399.24 702.96 399.24L702.96 399.24Z"/><path d="M918.64 256.87Q920.42 256.87 921.65 258.11Q922.89 259.35 922.89 261.12L922.89 261.12L922.89 294.77Q922.89 296.54 921.65 297.78Q920.42 299.02 918.64 299.02L918.64 299.02L884.29 299.02Q882.52 299.02 882.52 300.79L882.52 300.79L882.52 435.01Q882.52 436.79 881.28 438.03Q880.04 439.26 878.27 439.26L878.27 439.26L836.83 439.26Q835.06 439.26 833.82 438.03Q832.58 436.79 832.58 435.01L832.58 435.01L832.58 300.79Q832.58 299.02 830.81 299.02L830.81 299.02L809.92 299.02Q808.15 299.02 806.91 297.78Q805.67 296.54 805.67 294.77L805.67 294.77L805.67 261.12Q805.67 259.35 806.91 258.11Q808.15 256.87 809.92 256.87L809.92 256.87L830.81 256.87Q832.58 256.87 832.58 255.10L832.58 255.10L832.58 247.31Q832.58 225.35 839.31 213.13Q846.04 200.91 861.09 195.78Q876.14 190.64 902.71 191.35L902.71 191.35L916.17 191.35Q917.94 191.35 919.18 192.59Q920.42 193.83 920.42 195.60L920.42 195.60L920.42 224.29Q920.42 226.06 919.18 227.30Q917.94 228.54 916.17 228.54L916.17 228.54L904.48 228.54Q892.08 228.89 887.30 233.67Q882.52 238.45 882.52 251.20L882.52 251.20L882.52 255.10Q882.52 256.87 884.29 256.87L884.29 256.87L918.64 256.87Z"/><path d="M1056.41 293.00Q1056.41 294.77 1055.17 296.01Q1053.93 297.25 1052.16 297.25L1052.16 297.25L1018.16 297.25Q1016.39 297.25 1016.39 299.02L1016.39 299.02L1016.39 374.10Q1016.39 385.79 1021.17 391.45Q1025.96 397.12 1036.58 397.12L1036.58 397.12L1048.27 397.12Q1050.04 397.12 1051.28 398.36Q1052.52 399.60 1052.52 401.37L1052.52 401.37L1052.52 435.01Q1052.52 438.91 1048.27 439.62L1048.27 439.62Q1033.39 440.33 1027.02 440.33L1027.02 440.33Q997.62 440.33 983.10 430.59Q968.58 420.85 968.23 393.93L968.23 393.93L968.23 299.02Q968.23 297.25 966.46 297.25L966.46 297.25L946.27 297.25Q944.50 297.25 943.26 296.01Q942.02 294.77 942.02 293.00L942.02 293.00L942.02 261.48Q942.02 259.70 943.26 258.46Q944.50 257.23 946.27 257.23L946.27 257.23L966.46 257.23Q968.23 257.23 968.23 255.45L968.23 255.45L968.23 213.31Q968.23 211.54 969.47 210.30Q970.71 209.06 972.48 209.06L972.48 209.06L1012.14 209.06Q1013.91 209.06 1015.15 210.30Q1016.39 211.54 1016.39 213.31L1016.39 213.31L1016.39 255.45Q1016.39 257.23 1018.16 257.23L1018.16 257.23L1052.16 257.23Q1053.93 257.23 1055.17 258.46Q1056.41 259.70 1056.41 261.48L1056.41 261.48L1056.41 293.00Z"/><path d="M1159.12 441.74Q1135.39 441.74 1117.68 435.01Q1099.98 428.29 1090.24 416.24Q1080.50 404.20 1080.50 388.97L1080.50 388.97L1080.50 385.43Q1080.50 383.66 1081.74 382.42Q1082.98 381.18 1084.75 381.18L1084.75 381.18L1124.06 381.18Q1125.83 381.18 1127.07 382.42Q1128.31 383.66 1128.31 385.43L1128.31 385.43L1128.31 385.79Q1128.31 393.58 1136.99 399.07Q1145.66 404.56 1158.77 404.56L1158.77 404.56Q1170.81 404.56 1178.25 399.78Q1185.68 394.99 1185.68 387.91L1185.68 387.91Q1185.68 381.54 1179.31 378.35Q1172.93 375.16 1158.41 371.62L1158.41 371.62Q1141.77 367.37 1132.20 363.47L1132.20 363.47Q1109.54 355.68 1096.08 344.35Q1082.62 333.02 1082.62 311.77L1082.62 311.77Q1082.62 285.56 1102.99 270.15Q1123.35 254.75 1157.00 254.75L1157.00 254.75Q1179.66 254.75 1196.66 262.01Q1213.66 269.27 1223.05 282.37Q1232.43 295.47 1232.43 312.12L1232.43 312.12Q1232.43 313.89 1231.19 315.13Q1229.95 316.37 1228.18 316.37L1228.18 316.37L1190.29 316.37Q1188.52 316.37 1187.28 315.13Q1186.04 313.89 1186.04 312.12L1186.04 312.12Q1186.04 304.33 1178.07 299.02Q1170.10 293.70 1157.00 293.70L1157.00 293.70Q1145.31 293.70 1137.87 297.95Q1130.43 302.20 1130.43 309.64L1130.43 309.64Q1130.43 316.72 1137.69 320.27Q1144.95 323.81 1161.95 327.70L1161.95 327.70Q1165.85 328.77 1170.81 330.01Q1175.77 331.25 1181.43 333.02L1181.43 333.02Q1206.58 340.45 1221.10 352.14Q1235.62 363.83 1235.62 386.14L1235.62 386.14Q1235.62 412.35 1214.90 427.05Q1194.18 441.74 1159.12 441.74L1159.12 441.74Z"/><path d="M1425.45 329.47Q1427.58 342.93 1426.87 359.58L1426.87 359.58Q1426.51 363.83 1422.26 363.83L1422.26 363.83L1312.83 363.83Q1310.70 363.83 1311.41 365.60L1311.41 365.60Q1312.47 372.68 1315.31 379.77L1315.31 379.77Q1324.52 399.60 1352.85 399.60L1352.85 399.60Q1375.51 399.24 1388.62 381.18L1388.62 381.18Q1390.04 379.06 1391.81 379.06L1391.81 379.06Q1392.87 379.06 1394.29 380.47L1394.29 380.47L1419.79 405.62Q1421.56 407.39 1421.56 408.81L1421.56 408.81Q1421.56 409.52 1420.14 411.64L1420.14 411.64Q1408.45 426.16 1390.04 434.13Q1371.62 442.10 1349.66 442.10L1349.66 442.10Q1319.20 442.10 1298.13 428.29Q1277.06 414.47 1267.85 389.68L1267.85 389.68Q1260.41 371.97 1260.41 343.29L1260.41 343.29Q1260.41 323.81 1265.72 308.93L1265.72 308.93Q1273.87 283.79 1294.23 268.91Q1314.60 254.04 1342.58 254.04L1342.58 254.04Q1377.99 254.04 1399.42 274.58Q1420.85 295.12 1425.45 329.47L1425.45 329.47ZM1342.93 297.25Q1320.62 297.25 1313.54 318.14L1313.54 318.14Q1312.12 322.75 1311.06 329.47L1311.06 329.47Q1311.06 331.25 1312.83 331.25L1312.83 331.25L1374.10 331.25Q1376.22 331.25 1375.51 329.47L1375.51 329.47Q1373.74 319.20 1373.74 319.56L1373.74 319.56Q1370.56 308.93 1362.59 303.09Q1354.62 297.25 1342.93 297.25L1342.93 297.25Z"/><path d="M1537.72 442.10Q1509.39 442.10 1488.67 427.93Q1467.95 413.77 1459.10 388.97L1459.10 388.97Q1453.08 371.27 1453.08 347.18L1453.08 347.18Q1453.08 323.45 1459.10 306.10L1459.10 306.10Q1467.60 282.02 1488.49 268.20Q1509.39 254.39 1537.72 254.39L1537.72 254.39Q1566.05 254.39 1587.48 268.56Q1608.91 282.72 1615.99 304.33L1615.99 304.33Q1618.82 312.83 1618.82 317.08L1618.82 317.08L1618.82 317.79Q1618.82 320.97 1615.28 321.68L1615.28 321.68L1574.55 327.70L1573.85 327.70Q1570.66 327.70 1569.60 324.16L1569.60 324.16L1568.53 318.50Q1566.05 309.29 1557.55 303.27Q1549.05 297.25 1537.37 297.25L1537.37 297.25Q1526.03 297.25 1518.24 302.91Q1510.45 308.58 1507.26 318.50L1507.26 318.50Q1503.37 329.12 1503.37 347.54L1503.37 347.54Q1503.37 365.95 1506.91 376.58L1506.91 376.58Q1510.10 387.20 1518.07 393.22Q1526.03 399.24 1537.37 399.24L1537.37 399.24Q1548.35 399.24 1556.67 393.40Q1564.99 387.56 1568.18 377.29L1568.18 377.29Q1568.53 376.58 1568.53 375.16L1568.53 375.16Q1568.89 374.81 1568.89 374.10L1568.89 374.10Q1569.24 369.85 1573.85 370.56L1573.85 370.56L1614.57 376.93Q1618.12 377.64 1618.12 380.83L1618.12 380.83Q1618.12 383.66 1615.99 391.45L1615.99 391.45Q1608.55 415.18 1587.13 428.64Q1565.70 442.10 1537.72 442.10L1537.72 442.10Z"/><path d="M1726.14 442.10Q1696.39 442.10 1675.14 426.52Q1653.89 410.93 1646.10 384.02L1646.10 384.02Q1641.14 367.37 1641.14 347.89L1641.14 347.89Q1641.14 327.00 1646.10 310.35L1646.10 310.35Q1654.24 284.14 1675.49 269.27Q1696.74 254.39 1726.49 254.39L1726.49 254.39Q1755.53 254.39 1776.07 269.09Q1796.61 283.79 1805.11 310.00L1805.11 310.00Q1810.78 327.70 1810.78 347.18L1810.78 347.18Q1810.78 366.31 1805.82 382.95L1805.82 382.95Q1798.03 410.58 1776.96 426.34Q1755.89 442.10 1726.14 442.10L1726.14 442.10ZM1726.14 399.24Q1737.82 399.24 1745.97 392.16Q1754.12 385.08 1757.66 372.68L1757.66 372.68Q1760.49 361.35 1760.49 347.89L1760.49 347.89Q1760.49 333.02 1757.66 322.75L1757.66 322.75Q1753.76 310.70 1745.62 303.97Q1737.47 297.25 1725.78 297.25L1725.78 297.25Q1713.74 297.25 1705.77 303.97Q1697.80 310.70 1694.26 322.75L1694.26 322.75Q1691.43 331.25 1691.43 347.89L1691.43 347.89Q1691.43 363.83 1693.91 372.68L1693.91 372.68Q1697.45 385.08 1705.77 392.16Q1714.09 399.24 1726.14 399.24L1726.14 399.24Z"/></svg></a>
+        <p class="ft-tag"><span data-tw>The confidential dollar of the global digital economy.</span></p>
+        <dl class="ft-meta">
+          <div><dt><span data-tw>Contact</span></dt><dd><a class="ft-mail" href="mailto:hello@softseco.com" data-copy="hello@softseco.com"><span class="ft-roll"><span class="f1"><span data-tw>hello@softseco.com</span></span><span class="f2" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 12.75 6 6 9-13.5"/></svg>Copied</span></span></a><span class="sr" role="status" id="ftMailSt"></span></dd></div>
+        </dl>
+        <div class="social">
+          <a href="https://x.com/softseco" aria-label="X" target="_blank" rel="noopener noreferrer"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2H21l-6.52 7.45L22 22h-6.36l-4.99-6.52L4.92 22H2.16l6.97-7.96L2 2h6.52l4.51 5.97L18.244 2Z"/></svg></a>
+          <a href="https://www.instagram.com/softseco_/" aria-label="Instagram" target="_blank" rel="noopener noreferrer"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/></svg></a>
+          <a href="https://www.tiktok.com/@softseco" aria-label="TikTok" target="_blank" rel="noopener noreferrer"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16.6 5.82s.51.5 0 0A4.278 4.278 0 0 1 15.54 3h-3.09v12.4a2.592 2.592 0 0 1-2.59 2.5c-1.42 0-2.6-1.16-2.6-2.6 0-1.72 1.66-3.01 3.37-2.48V9.66c-3.45-.46-6.47 2.22-6.47 5.64 0 3.33 2.76 5.7 5.69 5.7 3.14 0 5.69-2.55 5.69-5.7V9.01a7.35 7.35 0 0 0 4.3 1.38V7.3s-1.88.09-3.24-1.48z"/></svg></a>
+          <a href="https://www.youtube.com/@softseco" aria-label="YouTube" target="_blank" rel="noopener noreferrer"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg></a>
+          <a href="https://github.com/softseco" aria-label="GitHub" target="_blank" rel="noopener noreferrer"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.58 2 12.26c0 4.51 2.87 8.32 6.84 9.67.5.09.68-.22.68-.49 0-.24-.01-.87-.01-1.71-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.36-2.22-.26-4.56-1.13-4.56-5.03 0-1.11.39-2.02 1.03-2.73-.1-.26-.45-1.3.1-2.71 0 0 .84-.27 2.75 1.04A9.36 9.36 0 0 1 12 6.84c.85.004 1.71.116 2.51.34 1.91-1.31 2.75-1.04 2.75-1.04.55 1.41.2 2.45.1 2.71.64.71 1.03 1.62 1.03 2.73 0 3.91-2.34 4.77-4.57 5.02.36.31.68.92.68 1.85 0 1.34-.01 2.42-.01 2.75 0 .27.18.59.69.49A10.02 10.02 0 0 0 22 12.26C22 6.58 17.52 2 12 2z"/></svg></a>
+        </div>
+      </div>
+      <nav class="ft-nav" aria-label="Footer">
+        <div class="ft-col"><h2 class="ft-h"><span data-tw>Platform</span></h2><ul><li><a href="https://softseco.com/eusd"><span data-tw>eUSD</span></a></li><li><a class="is-off" role="link" aria-disabled="true"><span data-tw>eEUR</span> <em>Planned</em></a></li><li><a class="is-off" role="link" aria-disabled="true"><span data-tw>Mint</span> <em>Planned</em></a></li><li><a class="is-off" role="link" aria-disabled="true"><span data-tw>Forex</span> <em>Planned</em></a></li><li><a class="is-off" role="link" aria-disabled="true"><span data-tw>Transparency</span> <em>Soon</em></a></li><li><a href="https://softseco.com/trade"><span data-tw>Trade</span></a></li></ul></div>
+        <div class="ft-col"><h2 class="ft-h"><span data-tw>Impact</span></h2><ul><li><a href="https://softseco.com/economic"><span data-tw>Economic</span></a></li><li><a href="https://softseco.com/social"><span data-tw>Social</span></a></li><li><a href="https://softseco.com/institutional"><span data-tw>Institutional</span></a></li></ul></div>
+        <div class="ft-col"><h2 class="ft-h"><span data-tw>Use cases</span></h2><ul><li><a href="https://softseco.com/payments"><span data-tw>Payments</span></a></li><li><a href="https://softseco.com/treasury"><span data-tw>Treasury</span></a></li><li><a href="https://softseco.com/trading"><span data-tw>Trading</span></a></li><li><a href="https://softseco.com/solutions-forex"><span data-tw>Forex</span></a></li><li><a href="https://softseco.com/banking"><span data-tw>Banking</span></a></li><li><a href="https://softseco.com/global-access"><span data-tw>Global Access</span></a></li></ul></div>
+        <div class="ft-col"><h2 class="ft-h"><span data-tw>Partners</span></h2><ul><li><a class="is-off" role="link" aria-disabled="true"><span data-tw>Partner Network</span> <em>Soon</em></a></li><li><a href="https://softseco.com/become-a-partner"><span data-tw>Become a partner</span></a></li></ul></div>
+        <div class="ft-col"><h2 class="ft-h"><span data-tw>Developer</span></h2><ul><li><a href="https://github.com/softseco/arcantis" target="_blank" rel="noopener"><span data-tw>Arcantis</span><svg class="ft-ext" viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25"/></svg></a></li><li><a href="https://github.com/softseco/vigilantis" target="_blank" rel="noopener"><span data-tw>Vigilantis</span><svg class="ft-ext" viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25"/></svg></a></li><li><a href="https://softseco.github.io/arcantis/" target="_blank" rel="noopener"><span data-tw>Playground</span><svg class="ft-ext" viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25"/></svg></a></li><li><a href="https://github.com/softseco" target="_blank" rel="noopener"><span data-tw>GitHub</span><svg class="ft-ext" viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25"/></svg></a></li></ul></div>
+        <div class="ft-col"><h2 class="ft-h"><span data-tw>Company</span></h2><ul><li><a href="https://softseco.com/about"><span data-tw>About</span></a></li><li><a href="https://softseco.com/roadmap"><span data-tw>Roadmap</span></a></li><li><a class="is-off" role="link" aria-disabled="true"><span data-tw>Careers</span> <em>Soon</em></a></li><li><a href="https://softseco.com/contact"><span data-tw>Contact</span></a></li></ul></div>
+        <div class="ft-col"><h2 class="ft-h"><span data-tw>Material</span></h2><ul><li><a href="https://softseco.com/faq"><span data-tw>FAQ</span></a></li><li><a href="https://softseco.com/documentation"><span data-tw>Documentation</span></a></li><li><a class="is-off" role="link" aria-disabled="true"><span data-tw>Brand</span> <em>Soon</em></a></li></ul></div>
+        <div class="ft-col"><h2 class="ft-h"><span data-tw>Support</span></h2><ul><li><a class="is-off" role="link" aria-disabled="true"><span data-tw>Help Center</span> <em>Soon</em></a></li><li><a href="https://softseco.com/privacy"><span data-tw>Privacy Policy</span></a></li><li><a class="is-off" role="link" aria-disabled="true"><span data-tw>Legal</span> <em>Soon</em></a></li><li><a href="https://softseco.com/cookies"><span data-tw>Cookie Notice</span></a></li></ul></div>
+      </nav>
+    </div>
+    <div class="ft-bot">
+      <i class="ft-rule" aria-hidden="true"></i>
+      <p class="ft-copy"><span data-tw>&copy; 2026 Softseco. All rights reserved.</span><small><span data-tw>eUSD by Softseco is planned for H1 2028 and not yet issued. Pre-incorporation, infrastructure phase. Not investment advice, not an offer to sell.</span></small></p>
+      <div class="ft-legal"><span class="ft-lang"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418"/></svg><span data-tw>English</span></span></div>
+    </div>
+  </div>
+</footer>
+</div>
+<div class="blur-edge-y" aria-hidden="true"></div>
+<div class="blur-edge-x" aria-hidden="true"></div>
+
+<script src="site.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+Arcantis
+Copyright 2026 Joachim Szamborski (Softseco)
+
+Licensed under the Business Source License 1.1; see LICENSE. Each version changes to the
+Apache License 2.0 on its Change Date. Production use and commercial licenses: see
+COMMERCIAL-LICENSE.md, or write to developers@softseco.com.
+
+Versions up to the commit tagged apache-2.0-final were published under the Apache License 2.0
+at https://github.com/softseco/confidential-sdk (as @softseco/confidential-transfers up to
+3.3.0 and softseco-confidential-transfers up to 3.0.0) and remain available there under that
+licence.

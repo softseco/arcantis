@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BUSL-1.1
+[package]
+name = "confidential-vault"
+version = "0.1.0"
+description = "Example: a program that holds a Token-2022 confidential balance and pays out of it."
+edition = "2021"
+license = "BUSL-1.1"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "confidential_vault"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = "0.31.1"
+
+# Anchor's macros expand to cfgs that exist only in the SBF build or as Anchor's own features.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(target_os, values("solana"))',
+    'cfg(feature, values("custom-heap", "custom-panic", "anchor-debug"))',
+] }
+deprecated = "allow"

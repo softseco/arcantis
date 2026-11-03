@@ -1,0 +1,19 @@
+# cargo audit (CI runs it in rust/). An advisory is ignored here only when no semver-compatible fix
+# exists and the affected code is not reached in a way that matters; each entry says why. Review at
+# every Solana upgrade and remove an entry once the fix lands.
+[advisories]
+ignore = [
+  # crypto-bigint 0.5.5, timing variability, through k256 <- solana-secp256k1-recover <-
+  # solana-program. Arcantis never signs with or recovers secp256k1 keys. The fix is in 0.7, which
+  # k256 0.13 does not accept.
+  "RUSTSEC-2026-0387",
+  # zstd 0.13.3 and zstd-safe 7.3, through solana-account-decoder-client-types, which decompresses
+  # base64+zstd account data from the RPC. 0391 needs a reused decompression context; the decoder
+  # makes a new one for every account. 0398 is in the seekable format, which is not used. 0403
+  # (legacy-format streaming decompression) is reachable only through a malicious RPC, which the
+  # threat model already treats as untrusted. Fixed in zstd 0.14 and zstd-safe 8, which the
+  # Solana 4.0 crates do not accept yet.
+  "RUSTSEC-2026-0391",
+  "RUSTSEC-2026-0398",
+  "RUSTSEC-2026-0403",
+]

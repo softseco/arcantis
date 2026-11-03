@@ -1,0 +1,22 @@
+{
+  "name": "arcantis-playground",
+  "type": "module",
+  "description": "Arcantis and Vigilantis in the browser, on Solana devnet. Built into ../docs.",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node check-vigilantis.mjs",
+    "import-site": "node import-site.mjs"
+  },
+  "dependencies": {
+    "@softseco/arcantis": "file:..",
+    "@solana-program/system": "^0.15.0",
+    "@solana-program/token-2022": "^0.19.0",
+    "@solana-program/zk-elgamal-proof": "^0.4.0",
+    "@solana/kit": "^8.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "private": true,
+  "license": "BUSL-1.1"
+}

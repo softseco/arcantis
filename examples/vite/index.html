@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confidential transfers in a web app</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --brand: #1315ff; --ink: #0a0b0d; --ink3: #4a4f5a; --muted: #6b7280; --line: #e8eaed; --soft: #f5f6f8;
+    --ok: #00a86b; --err: #c62828;
+    --font: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--ink); font: 16px/1.5 var(--font); }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 30px; letter-spacing: -.02em; margin: 0 0 6px; }
+  .lead { color: var(--ink3); margin: 0 0 24px; }
+  section { border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-top: 14px; }
+  h2 { font-size: 17px; margin: 0 0 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
+  input { font: 15px var(--font); padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); min-width: 0; }
+  input.address { flex: 1 1 320px; font-family: var(--mono); font-size: 13.5px; }
+  input.amount { width: 110px; }
+  button { font: 600 15px var(--font); border: 0; border-radius: 999px; padding: 10px 18px; background: var(--brand); color: #fff; cursor: pointer; }
+  button.ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+  button:disabled { opacity: .35; cursor: default; }
+  .kv { display: grid; grid-template-columns: 170px 1fr; gap: 4px 12px; font-size: 15px; }
+  .kv span:nth-child(odd) { color: var(--muted); }
+  .kv span:nth-child(even) { font-family: var(--mono); font-size: 14px; overflow-wrap: anywhere; }
+  .note { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
+  #status { margin-top: 18px; padding: 12px 14px; border-radius: 10px; background: var(--soft); font-size: 14.5px; overflow-wrap: anywhere; }
+  #status[data-state="done"] { color: var(--ok); }
+  #status[data-state="error"] { color: var(--err); }
+  #log { margin: 10px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12.5px; color: var(--ink3); }
+  #log li { padding: 3px 0; border-bottom: 1px dashed var(--line); overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Confidential transfers in a web app</h1>
+  <p class="lead">
+    A browser wallet, <code>@softseco/arcantis</code> and a Token-2022 mint with
+    confidential transfers. Amounts and balances are encrypted on chain; only this wallet can read them.
+  </p>
+
+  <section>
+    <h2>1. Wallet</h2>
+    <div id="wallets" class="row"><span class="note">Looking for wallets…</span></div>
+    <div class="kv" style="margin-top:12px">
+      <span>Network</span><span id="network"></span>
+      <span>Connected</span><span id="address">—</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Mint and keys</h2>
+    <div class="row">
+      <input id="mint" class="address" placeholder="Mint address (Token-2022 with confidential transfers)" spellcheck="false">
+    </div>
+    <div class="row">
+      <button id="unlock" disabled>Unlock confidential balance</button>
+      <button id="setup" class="ghost" disabled>Set up my token account</button>
+    </div>
+    <p class="note">
+      Unlocking asks the wallet to sign one fixed message. The keys come from that signature, live
+      only in this tab, and are reused for every step below.
+    </p>
+  </section>
+
+  <section>
+    <h2>3. Balances</h2>
+    <div class="kv">
+      <span>Public</span><span id="public-balance">—</span>
+      <span>Confidential</span><span id="confidential-balance">—</span>
+      <span>Waiting to apply</span><span id="pending">—</span>
+    </div>
+    <div class="row">
+      <button id="refresh" class="ghost" disabled>Refresh</button>
+      <button id="apply" class="ghost" disabled>Apply incoming</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>4. Move tokens</h2>
+    <div class="row">
+      <input id="deposit-amount" class="amount" inputmode="decimal" placeholder="Amount">
+      <button id="deposit" disabled>Deposit (public → confidential)</button>
+    </div>
+    <div class="row">
+      <input id="to" class="address" placeholder="Recipient wallet address" spellcheck="false">
+    </div>
+    <div class="row">
+      <input id="transfer-amount" class="amount" inputmode="decimal" placeholder="Amount">
+      <button id="transfer" disabled>Send confidentially</button>
+    </div>
+    <div class="row">
+      <input id="withdraw-amount" class="amount" inputmode="decimal" placeholder="Amount">
+      <button id="withdraw" disabled>Withdraw (confidential → public)</button>
+    </div>
+    <p class="note">
+      A confidential transfer and a withdraw are one transaction each, with their proofs inside.
+      Your wallet asks once for each operation.
+    </p>
+  </section>
+
+  <div id="status" data-state="idle">Connect a wallet to start.</div>
+  <ul id="log"></ul>
+</main>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

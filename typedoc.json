@@ -1,0 +1,26 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": [
+    "src/index.ts"
+  ],
+  "out": "docs/api",
+  "name": "@softseco/arcantis",
+  "includeVersion": true,
+  "readme": "none",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "gitRevision": "main",
+  "sourceLinkTemplate": "https://github.com/softseco/arcantis/blob/{gitRevision}/{path}#L{line}",
+  "navigationLinks": {
+    "GitHub": "https://github.com/softseco/arcantis",
+    "npm": "https://www.npmjs.com/package/@softseco/arcantis",
+    "Playground": "https://softseco.github.io/arcantis/"
+  },
+  "treatWarningsAsErrors": true,
+  "groupOrder": [
+    "Documents",
+    "Functions",
+    "Type Aliases",
+    "*"
+  ]
+}
