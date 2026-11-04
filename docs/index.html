@@ -18,7 +18,7 @@
 <meta name="theme-color" content="#1315FF">
 <link rel="icon" type="image/svg+xml" href="softseco-mark.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400..800&family=Red+Hat+Text:wght@400..600&family=Red+Hat+Mono:wght@400..500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400..800&family=Red+Hat+Text:wght@400..600&family=Red+Hat+Mono:wght@400..700&display=swap">
 <link rel="stylesheet" href="site.css">
 <style>
   /* The playground's own styles, on top of softseco.com's (site.css): the steps, the wallets card and the outputs. */
@@ -90,36 +90,67 @@
   .report .num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--display); font-weight: 600; }
   .out .controls { margin: 18px 0 0; }
   details.code { margin: 18px 0 0 52px; }
-  details.code summary { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); list-style: none; }
+  details.code summary { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); list-style: none; }
   details.code summary::-webkit-details-marker { display: none; }
-  details.code summary::before { content: "+"; color: var(--blue); font-size: 15px; }
-  details.code[open] summary::before { content: "–"; }
+  details.code summary::before { content: ""; width: 0; height: 0; border-left: 7px solid var(--grey); border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent; transition: transform .2s var(--ease); }
+  details.code[open] summary::before { transform: rotate(90deg); }
   details.code pre { margin: 12px 0 0; padding: 18px 20px; background: var(--night); color: #E6E7F0; border-radius: 16px; overflow-x: auto; font: 13px/1.65 var(--mono); }
   details.code pre .c { color: var(--grey-2); }
 
-  .side { position: sticky; top: calc(var(--hdr) + 24px); display: grid; gap: 14px; }
-  .side .kc { padding: 28px 26px 28px; }
+  /* The side column, as in the earlier playground: the keys card with the npm card under it, both
+     sticking under the header. The keys card is never taller than the screen (if it does not fit,
+     its middle scrolls and "Start a new run" stays in view). Four gaps in it are the same, --sp:
+     title to the first row, the last row to the balances, the balances to the button, the button
+     to the line under it. */
+  .side { position: sticky; top: calc(var(--hdr) + 20px); display: flex; flex-direction: column; gap: 14px; }
   .side .kc:hover { transform: none; }
-  .side h3 { font-size: 20px; }
-  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 15px; }
-  .row > span { color: var(--grey); }
-  .row > span small { display: block; font-size: 12.5px; color: var(--grey-2); }
-  .row a, .row b { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--ink); }
+  .side .keys { --rp: 7px; --sp: 20px; display: flex; flex-direction: column; gap: 0; padding: 22px 24px 20px; max-height: calc(100vh - var(--hdr) - 40px); max-height: calc(100dvh - var(--hdr) - 40px); }
+  .keys-top { display: grid; gap: 6px; padding-bottom: calc(var(--sp) - var(--rp)); }
+  .side .keys h3 { font-size: 18px; }
+  .keys-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  .keys-foot { display: grid; gap: var(--sp); padding-top: calc(var(--sp) - 1px); }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: var(--rp) 0; border-top: 1px solid var(--line); font-size: 16px; line-height: 1.35; }
+  .keys-body > .row:first-child { border-top: 0; }
+  .row > span { color: var(--grey); white-space: nowrap; }
+  .row a, .row b { font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--ink); white-space: nowrap; }
   .row a:hover { color: var(--blue); }
-  .bal { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 15px; }
-  .bal th { text-align: right; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--grey); padding: 8px 0; border-bottom: 1px solid var(--ink); }
+  .bal { width: 100%; border-collapse: collapse; margin-top: calc(var(--sp) - var(--rp) - 1px); font-size: 16px; }
+  .bal th { text-align: right; font-family: var(--text); font-size: 12.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); padding: calc(var(--rp) + 1px) 0 calc(var(--rp) - 1px); border-top: 1px solid transparent; border-bottom: 1px solid var(--line); }
   .bal th:first-child, .bal td:first-child { text-align: left; }
-  .bal td { text-align: right; padding: 10px 0; border-bottom: 1px solid var(--line); font-family: var(--display); font-weight: 600; font-variant-numeric: tabular-nums; }
-  .bal td:first-child { font-family: var(--text); font-weight: 500; color: var(--grey); }
-  .side .btn { width: 100%; margin-top: 18px; }
-  .fine { font-size: 13px; color: var(--grey); margin: 12px 0 0; }
-  .linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--blue); text-decoration: underline; cursor: pointer; }
+  .bal td { text-align: right; padding: var(--rp) 0; line-height: 1.35; border-bottom: 1px solid var(--line); font-family: var(--display); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bal td:first-child { font-family: var(--text); font-weight: 600; color: var(--ink); }
+  .side .keys .btn { width: 100%; height: 44px; margin: 0; background: var(--paper); color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--line); }
+  .side .keys .btn:hover { box-shadow: inset 0 0 0 1.5px var(--ink); background: var(--paper); color: var(--ink); }
+  .keys-foot .more { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 14px; line-height: 1.35; }
+  .keys-foot .more span { color: var(--grey); }
+  .linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--blue); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
   .linkbtn:disabled { opacity: .4; cursor: default; }
-  .side .dark { background: var(--night); color: #fff; }
-  .side .dark .eyebrow { color: var(--blue-on-dark); }
-  .side .dark p { color: rgba(255, 255, 255, .66); font-size: 15px; }
-  .side .dark pre { margin: 4px 0 0; padding: 14px 16px; background: var(--night-2); border-radius: 12px; font: 12.5px/1.6 var(--mono); color: #fff; overflow-x: auto; }
-  .side .dark a { color: #fff; font-weight: 600; text-decoration: underline; }
+  .side .kc.dark { padding: 24px 22px 24px; }
+
+  /* Phones: the picture gets a band of its own under the header and the copy follows it, so the
+     dots never sit behind the text. Where both do not fit on the screen, the section grows. */
+  @media (max-width: 760px) {
+    .pg-playground .ph { height: auto; min-height: 100svh; max-height: none; display: flex; flex-direction: column; background: var(--blue); }
+    .pg-playground .ph > picture { position: relative; display: block; flex: 1 1 auto; min-height: 52vw; margin-top: calc(var(--hdr) + env(safe-area-inset-top, 0px)); overflow: hidden; }
+    .pg-playground .ph > picture > img { object-position: 50% 50%; }
+    .pg-playground .ph .copy { position: relative; left: auto; right: auto; bottom: auto; padding: 4px var(--gr) 56px var(--gl); }
+    .pg-playground .ph.on-blue::after { height: 55%; background: linear-gradient(to top, rgba(13, 15, 204, .6), transparent); }
+  }
+
+  /* the hero's tag: a white dot that blinks; when it is off, a faint dot (the tag's own white, a
+     little stronger) keeps its place. site.css stops it for reduced motion. */
+  .pg-playground .ph .tag { gap: 10px; padding-left: 12px; }
+  .pg-playground .ph .tag i.blink { width: 8px; height: 8px; border-radius: 50%; background: #fff; animation: live-blink 1.6s ease-in-out infinite; }
+  @keyframes live-blink {
+    0%, 42% { background: #fff; }
+    50%, 92% { background: rgba(255, 255, 255, .3); }
+    100% { background: #fff; }
+  }
+  .side .kc.dark { background: var(--night); color: #fff; }
+  .side .kc.dark .eyebrow { color: var(--blue-on-dark); }
+  .side .kc.dark p { color: rgba(255, 255, 255, .66); font-size: 15px; }
+  .side .kc.dark pre { margin: 4px 0 0; padding: 14px 16px; background: var(--night-2); border-radius: 12px; font: 12.5px/1.6 var(--mono); color: #fff; overflow-x: auto; }
+  .side .kc.dark a { color: #fff; font-weight: 600; text-decoration: underline; }
 
   #finale { margin-top: 14px; background: var(--blue); color: #fff; border-radius: 24px; padding: clamp(32px, 4vw, 48px); display: grid; gap: 14px; justify-items: start; }
   #finale .eyebrow { color: #fff; opacity: .75; }
@@ -134,6 +165,8 @@
   @media (max-width: 1100px) {
     .pg-grid { grid-template-columns: minmax(0, 1fr); }
     .side { position: static; }
+    .side .keys { max-height: none; }
+    .keys-body { overflow: visible; }
   }
   @media (max-width: 760px) {
     .step { padding: 22px 20px 24px; border-radius: 20px; }
@@ -255,10 +288,10 @@
 
 <div class="page-body">
 <main id="main">
-  <section class="ph on-blue" data-bar="light" data-tone="light" style="--pos:50% 50%;--mpos:50% 50%">
-    <picture><source media="(max-width:760px)" srcset="assets/hero-m.jpg"><img src="assets/hero.jpg" alt="A white token with the Softseco mark, partly behind frosted glass, and ten cubes stepping up to it, on a blue background"></picture>
+  <section class="ph on-blue" data-bar="light" data-tone="light" style="--pos:70% 50%;--mpos:50% 50%">
+    <picture><source media="(max-width:760px)" srcset="assets/hero-m.jpg"><img src="assets/hero.jpg" alt="A folded sphere of white and light blue dots on a blue background, with a 3D eUSD coin in front of its upper right edge"></picture>
     <div class="copy">
-      <span class="tag">Live on Solana devnet</span>
+      <span class="tag"><i class="blink" aria-hidden="true"></i>Live on Solana devnet</span>
       <h1><span class="l">Private amounts.</span> <span class="l">Public rules.</span></h1>
       <p>Run a confidential token from start to finish, in this page. Arcantis keeps every amount encrypted, Vigilantis enforces the issuer's rules on every transfer, and an auditor can still read it all.</p>
       <div class="acts"><a class="btn btn-white" href="#run">Start</a><a class="btn btn-line" href="https://github.com/softseco/arcantis/tree/main/playground" target="_blank" rel="noopener">Read the code</a></div>
@@ -426,27 +459,30 @@ confidentialActivityToCsv(activity, { decimals: 6 });
         </ol>
 
         <aside class="side">
-          <div class="kc">
-            <div class="eyebrow">Keys in this browser</div>
-            <h3>Throwaway devnet wallets</h3>
-            <div>
-              <div class="row"><span>You<small>issuer and payer</small></span><a id="addr-you" target="_blank" rel="noopener">…</a></div>
-              <div class="row"><span>Bob<small>holder</small></span><a id="addr-bob" target="_blank" rel="noopener">…</a></div>
-              <div class="row"><span>Mallory<small>blocked in step 7</small></span><a id="addr-mallory" target="_blank" rel="noopener">…</a></div>
-              <div class="row"><span>Auditor<small>holds the auditor key</small></span><a id="addr-auditor" target="_blank" rel="noopener">…</a></div>
+          <div class="kc keys">
+            <div class="keys-top">
+              <div class="eyebrow">Keys in this browser</div>
+              <h3>Throwaway devnet wallets</h3>
+            </div>
+            <div class="keys-body">
+              <div class="row"><span title="issuer and payer">You</span><a id="addr-you" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span title="holder">Bob</span><a id="addr-bob" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span title="holds the auditor key">Auditor</span><a id="addr-auditor" target="_blank" rel="noopener">…</a></div>
+              <div class="row"><span title="blocked in step 7">Mallory</span><a id="addr-mallory" target="_blank" rel="noopener">…</a></div>
               <div class="row"><span>Token</span><a id="token" target="_blank" rel="noopener">not created yet</a></div>
               <div class="row"><span>Your SOL</span><b id="sol">—</b></div>
+              <table class="bal">
+                <thead><tr><th></th><th>Public</th><th>Confidential</th></tr></thead>
+                <tbody>
+                  <tr><td>You</td><td id="you-pub">—</td><td id="you-conf">—</td></tr>
+                  <tr><td>Bob</td><td id="bob-pub">—</td><td id="bob-conf">—</td></tr>
+                </tbody>
+              </table>
             </div>
-            <table class="bal">
-              <thead><tr><th></th><th>Public</th><th>Confidential</th></tr></thead>
-              <tbody>
-                <tr><td>You</td><td id="you-pub">—</td><td id="you-conf">—</td></tr>
-                <tr><td>Bob</td><td id="bob-pub">—</td><td id="bob-conf">—</td></tr>
-              </tbody>
-            </table>
-            <button class="btn btn-line dark" id="reset" type="button">Start a new run</button>
-            <p class="fine">A new token, Bob, Mallory and auditor. Your wallet and its SOL stay. <button class="linkbtn" id="restart" type="button">Use new keys instead</button></p>
-            <p class="fine">The keys live only in this browser's storage. Devnet only: never send real funds to these addresses.</p>
+            <div class="keys-foot">
+              <button class="btn btn-line dark" id="reset" type="button" title="A new token, Bob, Mallory and auditor. Your wallet and its SOL stay.">Start a new run</button>
+              <div class="more"><button class="linkbtn" id="restart" type="button" title="New keys for everyone, your wallet too">Use new keys instead</button><span title="The keys live only in this browser's storage. Never send real funds to these addresses.">Devnet only</span></div>
+            </div>
           </div>
           <div class="kc dark">
             <div class="eyebrow">In your app</div>
