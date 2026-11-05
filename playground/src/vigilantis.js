@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 //
 // The Vigilantis instructions the playground sends, encoded with @solana/kit from the Vigilantis IDL.
-// `vigilantis-idl.json` is the 1.0.0-rc.1 IDL (sdk/src/idl/vigilantis.json in
+// `vigilantis-idl.json` is the 1.0.0-rc.2 IDL (sdk/src/idl/vigilantis.json in
 // github.com/softseco/vigilantis) without its doc comments; `npm run check` compares the two.
 // From Node, use the @softseco/vigilantis package instead.
 import { TOKEN_2022_PROGRAM_ADDRESS, getTransferCheckedInstruction } from "@solana-program/token-2022";
@@ -48,6 +48,7 @@ export const pdas = {
   freezeAuthority: (mint) => pda(utf8("freeze-authority"), addressBytes.encode(mint)),
   pauseAuthority: (mint) => pda(utf8("pause-authority"), addressBytes.encode(mint)),
   freezeRecord: (mint, token) => pda(utf8("freeze-record"), addressBytes.encode(mint), addressBytes.encode(token)),
+  forfeiture: (mint, token) => pda(utf8("forfeiture"), addressBytes.encode(mint), addressBytes.encode(token)),
 };
 
 /**
@@ -131,6 +132,8 @@ async function freezeAccounts(mint, tokenAccount, authority) {
     policy_config: await pdas.policy(mint),
     freeze_authority: await pdas.freezeAuthority(mint),
     freeze_record: await pdas.freezeRecord(mint, tokenAccount),
+    // Since 1.0.0-rc.2: a thaw is refused while this record exists. The playground never forfeits.
+    forfeiture_record: await pdas.forfeiture(mint, tokenAccount),
   };
 }
 

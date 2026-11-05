@@ -67,7 +67,7 @@ local faucet.
 ## Notes
 
 - **Vigilantis instructions.** `src/vigilantis.js` encodes them with `@solana/kit` from
-  `src/vigilantis-idl.json`, the Vigilantis 1.0.0-rc.1 IDL without its doc comments. After a new
+  `src/vigilantis-idl.json`, the Vigilantis 1.0.0-rc.2 IDL without its doc comments. After a new
   Vigilantis release, compare the copy with the release's IDL and update it:
   `npm run check -- <path>/vigilantis/sdk/src/idl/vigilantis.json [--write]`. From Node you would
   use `@softseco/vigilantis` instead.
