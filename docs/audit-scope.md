@@ -3,9 +3,9 @@
 Prepared on 29 October 2026 for Arcantis's first independent audit, updated on 30 October for
 the format checks ([formats.md](./formats.md)), on 2 November after a second review of our own and
 on 3 November for transfers and withdrawals in one transaction, and on 5 November for the same in
-the Rust crate (1.0.0-rc.2, in development). Arcantis is self-audited, not independently audited.
-The code under audit is the commit tagged `v1.0.0-rc.1` in the public `arcantis` repository, with
-the Rust crate's changes since then on `main`, which this document describes.
+the Rust crate (1.0.0-rc.2). Arcantis is self-audited, not independently audited. The code under
+audit is the commit tagged `v1.0.0-rc.2` in the public `arcantis` repository, which this document
+describes.
 
 The threat model ([threat-model.md](./threat-model.md)) is the companion to this page: what
 Arcantis protects, who is trusted, the thirteen invariants and the tests that check them, the known

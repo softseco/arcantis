@@ -10,9 +10,11 @@ This repository holds Arcantis: the TypeScript package `@softseco/arcantis` and 
 the two were released together under one version, and from 2.1.0 each had its own versions: the
 TypeScript package tagged `vX.Y.Z`, the Rust crate `rust-vX.Y.Z` (entries headed `rust-X.Y.Z`).
 
-## [Unreleased]
+## [1.0.0-rc.2] - 2026-11-05
 
-The Rust crate `arcantis` 1.0.0-rc.2 (in development). The TypeScript package is unchanged.
+The Rust crate's transfers and withdrawals in one transaction, as in the TypeScript package. Both
+move to 1.0.0-rc.2; the TypeScript package's code is unchanged. Self-audited, not independently
+audited.
 
 ### Added
 
@@ -47,6 +49,11 @@ The Rust crate `arcantis` 1.0.0-rc.2 (in development). The TypeScript package is
   `serde_json` are now direct dependencies (they were already in the tree through
   `solana-client`). `Cargo.lock` moves `solana-address` to 2.9.0, `solana-hash` to 4.7.0 and
   `solana-pubkey` to 4.4.0, which `solana-message` 6 needs.
+- The crate's README (`rust/README.md`) starts with the project's banner, for crates.io.
+
+### Licence
+
+- 1.0.0-rc.2 becomes Apache-2.0 on its Change Date, 2030-11-05 (`LICENSE`, `rust/LICENSE`).
 
 ## [1.0.0-rc.1] - 2026-11-03
 

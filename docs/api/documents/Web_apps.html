@@ -1,5 +1,5 @@
-<!DOCTYPE html><html class="default" lang="en" data-base="../"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>Web apps | @softseco/arcantis - v1.0.0-rc.1</title><meta name="description" content="Documentation for @softseco/arcantis"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/icons.js" id="tsd-icons-script"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar">
-<div class="tsd-toolbar-contents container"><a href="../index.html" class="title">@softseco/arcantis - v1.0.0-rc.1</a>
+<!DOCTYPE html><html class="default" lang="en" data-base="../"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>Web apps | @softseco/arcantis - v1.0.0-rc.2</title><meta name="description" content="Documentation for @softseco/arcantis"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/icons.js" id="tsd-icons-script"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar">
+<div class="tsd-toolbar-contents container"><a href="../index.html" class="title">@softseco/arcantis - v1.0.0-rc.2</a>
 <div id="tsd-toolbar-links"><a href="https://github.com/softseco/arcantis">GitHub</a><a href="https://www.npmjs.com/package/@softseco/arcantis">npm</a><a href="https://softseco.github.io/arcantis/">Playground</a></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/>
 <ul role="listbox" id="tsd-search-results"></ul>
 <div id="tsd-search-status" aria-live="polite" aria-atomic="true">
@@ -88,8 +88,8 @@ because the SDK simulates each transaction before sending it.</li>
 <p>Phantom, Solflare and Backpack support both. When a wallet cannot sign messages, the SDK's error
 says so; you can check up front with <code>isMessageSigner(signer)</code> or <code>&quot;solana:signMessage&quot; in wallet.features</code>.</p>
 <h2 id="what-the-user-approves" class="tsd-anchor-link">What the user approves<a href="#what-the-user-approves" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<p>Since 3.2.0 the wallet is asked once per operation. A transfer is five transactions, but the SDK
-plans and signs them together, so the wallet shows one request for all five:</p>
+<p>The wallet is asked once per operation. Since 1.0.0 a transfer and a withdrawal are one
+transaction each, with their proofs inside:</p>
 <table>
 <thead>
 <tr>
@@ -122,19 +122,27 @@ plans and signs them together, so the wallet shows one request for all five:</p>
 <tr>
 <td><code>transfer</code></td>
 <td>1</td>
-<td>5 (proof accounts, then the transfer together with closing them)</td>
+<td>1 (5 with <code>singleTransaction: false</code>)</td>
 </tr>
 <tr>
 <td><code>withdraw</code></td>
 <td>1</td>
-<td>4</td>
+<td>1 (4 with <code>singleTransaction: false</code>)</td>
 </tr>
 </tbody>
 </table>
-<p>The transactions are then sent one after another, each simulated first. If one fails before the
-transfer itself lands, the SDK closes the proof accounts it created (their rent goes back to the
-payer) and throws a <code>ConfidentialTransfersError</code>. Closing them is one more transaction, so the
-wallet asks once more in that case.</p>
+<p>A transfer or withdrawal is a v1 transaction of up to 4,096 bytes, which Solana accepts since
+15 September 2026. The wallet has to be able to sign one; a Wallet Standard wallet lists <code>1</code> in
+<code>supportedTransactionVersions</code> of its <code>solana:signTransaction</code> feature when it can (the Vite
+example checks this when it connects). If yours cannot, pass <code>singleTransaction: false</code>: the SDK then verifies the proofs into proof accounts first, the way
+it did before 1.0.0, and the wallet still shows one request, for all five transactions. They are
+sent one after another, each simulated first. If one fails before the transfer itself lands, the
+SDK closes the proof accounts it created (their rent goes back to the payer) and throws a
+<code>ConfidentialTransfersError</code>. Closing them is one more transaction, so the wallet asks once more in
+that case. The SDK also takes this path by itself when the one transaction would be too large,
+for example with a transfer hook that asks for many accounts.</p>
+<p>The fee payer does not have to be the owner. A relayer that pays the SOL fees (<code>payer</code>) lets
+people send without holding SOL; the owner still signs the same single transaction.</p>
 <h2 id="errors" class="tsd-anchor-link">Errors<a href="#errors" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <p>Everything the SDK throws on purpose is a <code>ConfidentialTransfersError</code> with a <code>code</code>, so the app
 can say something useful instead of showing a stack trace:</p>
@@ -179,7 +187,7 @@ it was asked to approve transactions once per operation. CI runs it on every pus
 <li><a href="#testing"><span>Testing</span></a></li></ul></div></details></div>
 <div class="site-menu">
 <nav id="tsd-sidebar-links" class="tsd-navigation"><a href="https://github.com/softseco/arcantis" class="tsd-nav-link">GitHub</a><a href="https://www.npmjs.com/package/@softseco/arcantis" class="tsd-nav-link">npm</a><a href="https://softseco.github.io/arcantis/" class="tsd-nav-link">Playground</a></nav>
-<nav class="tsd-navigation"><a href="../index.html">@softseco/arcantis - v1.0.0-rc.1</a>
+<nav class="tsd-navigation"><a href="../index.html">@softseco/arcantis - v1.0.0-rc.2</a>
 <ul class="tsd-small-nested-navigation" id="tsd-nav-container">
 <li>Loading...</li></ul></nav></div></div></div><footer>
 <p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer>

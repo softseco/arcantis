@@ -1,4 +1,6 @@
 <!-- SPDX-License-Identifier: BUSL-1.1 -->
+<p align="center"><img src="https://raw.githubusercontent.com/softseco/arcantis/main/.github/banner.jpg" alt="Arcantis: private amounts on Solana" width="100%"></p>
+
 # Arcantis for Rust (`arcantis` crate)
 
 [![crates.io](https://img.shields.io/crates/v/arcantis.svg)](https://crates.io/crates/arcantis)
@@ -10,10 +12,10 @@ amounts, in a few calls. The Rust twin of the
 [`@softseco/arcantis`](https://www.npmjs.com/package/@softseco/arcantis)
 TypeScript SDK, with the same keys, the same checks and the same error codes.
 
-> **Status: `1.0.0-rc.2` in development** (`1.0.0-rc.1` is on crates.io), the release candidate
-> for an independent audit, continuing `softseco-confidential-transfers` 3.0.0 under a new name.
-> New in rc.2: a transfer or withdraw in one transaction, as in the TypeScript SDK. Arcantis is self-audited, not
-> independently audited; the [threat model](https://github.com/softseco/arcantis/blob/main/docs/threat-model.md)
+> **Status: `1.0.0-rc.2`**, the release candidate for an independent audit, continuing
+> `softseco-confidential-transfers` 3.0.0 under a new name. New in rc.2: a transfer or withdraw in
+> one transaction, as in the TypeScript SDK. Arcantis is self-audited, not independently audited;
+> the [threat model](https://github.com/softseco/arcantis/blob/main/docs/threat-model.md)
 > and the [audit scope](https://github.com/softseco/arcantis/blob/main/docs/audit-scope.md) say
 > what it protects and what was checked. Configure, deposit, apply, read, transfer and withdraw;
 > mints with an auditor and mints with a transfer hook; cleanup when a transfer fails partway;

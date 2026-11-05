@@ -18,7 +18,7 @@ counts; this page says the same in plain words.
 - Production use that was not notified is not licensed, and we may ask for a commercial license
   covering the whole time it lasted.
 - Each version becomes Apache-2.0 on its Change Date, four years after its release (for
-  1.0.0-rc.1: 3 November 2030).
+  1.0.0-rc.1: 3 November 2030; for 1.0.0-rc.2: 5 November 2030).
 
 ## Telling us that you use Arcantis
 

@@ -10,7 +10,7 @@ transfers without hand-assembling the primitives.
 
 A Rust crate with the core helpers lives in [`rust/`](#rust).
 
-> **Status: 1.0.0-rc.1**, the release candidate for an independent audit. Arcantis continues
+> **Status: 1.0.0-rc.2**, the release candidate for an independent audit. Arcantis continues
 > `@softseco/confidential-transfers` 3.3.0 (TypeScript) and `softseco-confidential-transfers`
 > 3.0.0 (Rust) under a new name; the functions keep their names. Built on `@solana/kit` 8. The whole flow (configure, deposit, apply,
 > transfer, withdraw) runs end-to-end on **devnet** and against a local validator, in Node and in
@@ -303,7 +303,7 @@ full workflow.
 
 ## Project status
 
-`1.0.0-rc.1`, continuing `@softseco/confidential-transfers` 3.3.0 and the Rust crate
+`1.0.0-rc.2`, continuing `@softseco/confidential-transfers` 3.3.0 and the Rust crate
 3.0.0. The TypeScript package covers the full confidential-transfer lifecycle (configure, deposit,
 apply, transfer, withdraw, decrypt), transfer-hook mints and auditor selective disclosure, runs
 end-to-end on devnet, works in web apps with browser wallets, handles failures halfway through a

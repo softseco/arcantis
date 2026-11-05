@@ -20,7 +20,7 @@ because the programs identify them already.
 | The owner's copy of the available balance (`decryptableAvailableBalance`) | Token-2022, same extension | AES-128-GCM-SIV, 36 bytes: 12-byte nonce, 8-byte amount, 16-byte tag | the extension type |
 | A mint's auditor key | Token-2022 (`ConfidentialTransferMint` extension) | 32 bytes, or none | the extension type |
 | A transfer's amount | Token-2022 `Transfer` instruction and its proofs | low 16 and high 32 bits apart, as grouped ciphertexts with three handles (source, destination, auditor) in the validity proof; the auditor's ElGamal ciphertexts also in the instruction data | the instruction discriminators |
-| Proofs | ZK ElGamal Proof Program | context-state accounts: ciphertext-commitment equality, batched grouped-ciphertext validity, batched range proofs | the proof type in each account |
+| Proofs | ZK ElGamal Proof Program | ciphertext-commitment equality, batched grouped-ciphertext validity, batched range proofs: in the instruction data of the proof instructions before the transfer or withdraw in the same transaction, or in context-state accounts | the instruction's proof type, or the proof type in each account |
 | The keys | the standard derivation shared by the Solana zk-sdk, Token-2022's clients and wallets | a wallet's Ed25519 signature over `solana-conf-bal/v1` (then a public seed, for the seed-scoped keys), expanded with HKDF-SHA512 into a 32-byte ElGamal secret key and a 16-byte AES key | the message, which carries the version |
 | The auditor report as JSON | Arcantis | `{"format": "arcantis.confidential-activity", "version": 1, ...}` | its `format` and `version` fields |
 | The auditor report as CSV | Arcantis | one header row, then one row per entry | its header row |

@@ -1,6 +1,6 @@
 {
   "name": "@softseco/arcantis",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0-rc.2",
   "license": "BUSL-1.1",
   "description": "Arcantis: TypeScript SDK for Token-2022 confidential transfers on Solana: configure, deposit, apply, transfer, withdraw, decrypt.",
   "keywords": [
