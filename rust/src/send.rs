@@ -8,12 +8,14 @@
 //! either is the outcome reported as unknown ([`Error::unknown_outcome`]).
 use std::time::{Duration, Instant};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use serde_json::json;
 use solana_client::{
     client_error::{ClientError, ClientErrorKind},
     nonblocking::rpc_client::RpcClient,
     rpc_config::{CommitmentConfig, RpcSendTransactionConfig, RpcSimulateTransactionConfig},
-    rpc_request::RpcError,
-    rpc_response::TransactionConfirmationStatus,
+    rpc_request::{RpcError, RpcRequest},
+    rpc_response::{Response, RpcSimulateTransactionResult, TransactionConfirmationStatus},
 };
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
@@ -27,6 +29,7 @@ use solana_sdk::{
 };
 
 use crate::error::{redact_rpc_error, Error, ErrorCode, Result};
+use crate::v1::{self, Budget, CompiledMessage};
 
 /// Largest transaction on the wire.
 const PACKET_DATA_SIZE: usize = 1232;
@@ -75,6 +78,170 @@ impl Sender<'_> {
                 other => return other,
             }
         }
+    }
+
+    /// Send `instructions` as one v1 transaction (up to 4,096 bytes; see [`crate::v1`]), signed
+    /// by the payer and those of `signers` the instructions need, with its compute budget set
+    /// from a simulation. `Ok(None)` when they do not fit in one, decided before anything is
+    /// signed or sent.
+    pub async fn send_single(
+        &self,
+        instructions: &[Instruction],
+        signers: &[&(dyn Signer + Sync)],
+        step: &'static str,
+    ) -> Result<Option<Signature>> {
+        let mut attempt = 0;
+        loop {
+            match self.send_single_once(instructions, signers, step).await {
+                Err(e)
+                    if e.code() == ErrorCode::TransactionExpired && attempt < self.max_retries =>
+                {
+                    attempt += 1
+                }
+                other => return other,
+            }
+        }
+    }
+
+    async fn send_single_once(
+        &self,
+        instructions: &[Instruction],
+        signers: &[&(dyn Signer + Sync)],
+        step: &'static str,
+    ) -> Result<Option<Signature>> {
+        let payer = self.payer.pubkey();
+        let with_fee = self.compute_unit_price.is_some_and(|p| p > 0);
+        let blockhash = self
+            .rpc
+            .get_latest_blockhash()
+            .await
+            .map_err(|e| self.rpc_error(e))?;
+        let Some(draft) = v1::compile(&payer, instructions, &blockhash, Budget::max(with_fee))
+        else {
+            return Ok(None);
+        };
+        if !draft.fits() {
+            return Ok(None);
+        }
+        let chosen = self.signers_for(&draft, signers)?;
+
+        // The first simulation, with the largest budget, measures what the transaction uses.
+        let unsigned = draft.wire(&vec![[0u8; 64]; draft.signers.len()]);
+        let estimate = self.simulate_bytes(&unsigned, step).await?;
+        let budget = Budget::from_simulation(
+            estimate.units_consumed,
+            estimate.loaded_accounts_data_size,
+            self.compute_unit_price,
+        );
+        let Some(message) = v1::compile(&payer, instructions, &blockhash, budget) else {
+            return Ok(None);
+        };
+        if !message.fits() {
+            return Ok(None);
+        }
+
+        let signatures = chosen
+            .iter()
+            .map(|signer| {
+                signer
+                    .try_sign_message(&message.bytes)
+                    .map(<[u8; 64]>::from)
+                    .map_err(|e| {
+                        Error::new(
+                            ErrorCode::InvalidInput,
+                            self.operation,
+                            format!("cannot sign the transaction: {e}"),
+                        )
+                        .with_source(e)
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let wire = message.wire(&signatures);
+        let signature = Signature::from(signatures[0]);
+
+        // As for any transaction: simulated first, so that a failure comes with the logs.
+        self.simulate_bytes(&wire, step).await?;
+        let sent = self
+            .rpc
+            .send::<String>(
+                RpcRequest::SendTransaction,
+                json!([
+                    BASE64.encode(&wire),
+                    {
+                        "encoding": "base64",
+                        "preflightCommitment": self.rpc.commitment().commitment,
+                    }
+                ]),
+            )
+            .await;
+        if let Err(e) = sent {
+            if let Some(err) = e.get_transaction_error() {
+                let error = self.transaction_error(&err, step, "failed");
+                return Err(with_redacted_source(error, e));
+            }
+            if !may_have_been_sent(&e) {
+                return Err(self.rpc_error(e).with_step(step));
+            }
+            return self.settle(signature, &blockhash, step, e).await.map(Some);
+        }
+        self.confirm(signature, &blockhash, step).await.map(Some)
+    }
+
+    /// The signer for each key that must sign `message`, in order: the payer or one of `signers`.
+    fn signers_for<'s>(
+        &'s self,
+        message: &CompiledMessage,
+        signers: &[&'s (dyn Signer + Sync)],
+    ) -> Result<Vec<&'s (dyn Signer + Sync)>> {
+        message
+            .signers
+            .iter()
+            .map(|key| {
+                std::iter::once(self.payer)
+                    .chain(signers.iter().copied())
+                    .find(|signer| signer.pubkey() == *key)
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorCode::InvalidInput,
+                            self.operation,
+                            format!("cannot sign the transaction: no signer for {key}"),
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    /// Simulate a transaction given as bytes (a v1 transaction the pinned client cannot encode),
+    /// without checking its signatures. A failure is an error with the program logs.
+    async fn simulate_bytes(
+        &self,
+        wire: &[u8],
+        step: &'static str,
+    ) -> Result<RpcSimulateTransactionResult> {
+        let simulation = self
+            .rpc
+            .send::<Response<RpcSimulateTransactionResult>>(
+                RpcRequest::SimulateTransaction,
+                json!([
+                    BASE64.encode(wire),
+                    {
+                        "encoding": "base64",
+                        "sigVerify": false,
+                        "commitment": self.rpc.commitment().commitment,
+                    }
+                ]),
+            )
+            .await
+            .map_err(|e| self.rpc_error(e))?
+            .value;
+        if let Some(err) = simulation.err.clone() {
+            let logs = simulation.logs.clone().unwrap_or_default();
+            let err = TransactionError::from(err);
+            return Err(self
+                .transaction_error(&err, step, "failed simulation")
+                .with_logs(logs));
+        }
+        Ok(simulation)
     }
 
     /// True if the instructions fit in one transaction with these signers.
@@ -143,7 +310,17 @@ impl Sender<'_> {
             // The request may have reached a node, which sends the transaction on.
             return self.settle(signature, &blockhash, step, e).await;
         }
+        self.confirm(signature, &blockhash, step).await
+    }
 
+    /// Wait until a sent transaction is confirmed, has failed, or its blockhash has expired.
+    async fn confirm(
+        &self,
+        signature: Signature,
+        blockhash: &Hash,
+        step: &'static str,
+    ) -> Result<Signature> {
+        let blockhash = *blockhash;
         loop {
             let status = match self
                 .rpc

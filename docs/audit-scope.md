@@ -2,9 +2,10 @@
 
 Prepared on 29 October 2026 for Arcantis's first independent audit, updated on 30 October for
 the format checks ([formats.md](./formats.md)), on 2 November after a second review of our own and
-on 3 November for transfers and withdrawals in one transaction. Arcantis is self-audited, not
-independently audited. The code under audit is the commit tagged `v1.0.0-rc.1` in the public
-`arcantis` repository, which this document describes.
+on 3 November for transfers and withdrawals in one transaction, and on 5 November for the same in
+the Rust crate (1.0.0-rc.2, in development). Arcantis is self-audited, not independently audited.
+The code under audit is the commit tagged `v1.0.0-rc.1` in the public `arcantis` repository, with
+the Rust crate's changes since then on `main`, which this document describes.
 
 The threat model ([threat-model.md](./threat-model.md)) is the companion to this page: what
 Arcantis protects, who is trusted, the thirteen invariants and the tests that check them, the known
@@ -17,10 +18,10 @@ what to read, how to build and test it, and how much of it the tests reach.
 |---|---|---:|
 | `src/` | The TypeScript package `@softseco/arcantis`: one file per operation (`configureAccount`, `deposit`, `applyPendingBalance`, `decryptBalance`, `transfer`, `withdraw`, `recoverProofAccounts`), keys (`keys.ts`), the auditor (`auditor.ts`, `auditorReport.ts`, with the JSON report and its reader), the `arcantis` command (`cli.ts`), the format names (`formats.ts`) and errors. | 1,425 |
 | `src/internal/` | Proof construction (`confidentialTransferProof.ts`, adapted from `@solana-program/token-2022`), ciphertext arithmetic, the available-balance check, sending and signing (`send.ts`), transfer-hook resolution, account checks, and the two builds of the zk-sdk loader (`zk.ts` for Node, `zk.web.ts` for browsers). | 1,479 |
-| `rust/src/` | The Rust crate `arcantis`: `ConfidentialClient` (`client.rs`), account checks, proof accounts, sending, keys, the auditor and errors, with their unit tests. | 2,915 |
+| `rust/src/` | The Rust crate `arcantis`: `ConfidentialClient` (`client.rs`), account checks, proof accounts, sending (`send.rs`, and `v1.rs` for one-transaction transfers), keys, the auditor and errors, with their unit tests. | 3,472 |
 | `package.json`, `package-lock.json`, `rust/Cargo.toml`, `rust/Cargo.lock` | Dependencies and their exact versions. | |
 
-About 5,800 lines in all, 2,900 of them TypeScript. The two SDKs do the same things; reading one
+About 6,400 lines in all, 2,900 of them TypeScript. The two SDKs do the same things; reading one
 closely and the other for differences is the efficient order, and the shared test vectors
 (`test-vectors/`) pin where they must agree.
 
@@ -60,8 +61,8 @@ for each.
 | `deposit` | `deposit` | payer, owner | 1 | `Deposit` (amount public) |
 | `applyPendingBalance` | `apply_pending_balance` | payer, owner | 1 | `ApplyPendingBalance` |
 | `decryptBalance` | `decrypt_balance`, `decrypt_balance_of` | owner (key message only) | 0 | none |
-| `transfer` | `transfer` | payer, owner | 1 (TypeScript, a v1 transaction); 5 with proof accounts (Rust, or TypeScript's fallback) | the three proofs verified from instruction data, then `Transfer` with the hook's accounts, reading them at offsets −3, −2, −1; or the proofs verified into three context accounts, `Transfer`, and the accounts closed |
-| `withdraw` | `withdraw` | payer, owner | 1 (TypeScript); 4 with proof accounts | the two proofs, then `Withdraw` (amount public) reading them at offsets −2, −1; or two context accounts, `Withdraw`, and the accounts closed |
+| `transfer` | `transfer` | payer, owner | 1 (a v1 transaction); 5 with proof accounts (the fallback) | the three proofs verified from instruction data and `Transfer` with the hook's accounts reading them (TypeScript: proofs first, offsets −3, −2, −1; Rust: `Transfer` first, offsets 1, 2, 3); or the proofs verified into three context accounts, `Transfer`, and the accounts closed |
+| `withdraw` | `withdraw` | payer, owner | 1; 4 with proof accounts | the two proofs and `Withdraw` (amount public) reading them (offsets −2, −1 in TypeScript; 1, 2 in Rust); or two context accounts, `Withdraw`, and the accounts closed |
 | `recoverProofAccounts` | `recover_proof_accounts` | payer | 1 per 8 accounts | `CloseContextState` |
 | `listConfidentialActivity`, `decryptTransferAmountAsAuditor`, `arcantis audit-report` | `decrypt_auditor_amount` | auditor (key message only) | 0 | none |
 | | `prepare_configure`, `prepare_transfer`, `prepare_withdraw`, `pending_balance_update`, `transfer_hook_accounts`, `close_proof_accounts` | payer | proofs only | for a program that makes the Token-2022 calls through CPI |

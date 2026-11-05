@@ -106,21 +106,26 @@ and `rust/tests/` and the `#[cfg(test)]` modules of `rust/src/` (Rust).
    correct copy. A copy that cannot be reconciled is `BALANCE_OUT_OF_SYNC`, and nothing is
    signed. (`availableBalance.test.ts`; `accounts::tests`,
    `repairs_an_aes_copy_left_behind_by_a_credit_during_an_apply`)
-8. **Proofs travel inside the transfer, or in temporary accounts.** In TypeScript a transfer or
-   withdrawal is one v1 transaction (up to 4,096 bytes): the proof-verification instructions come
-   right before the transfer or withdraw instruction, which names them by offset (−3, −2, −1 for a
-   transfer; −2, −1 for a withdrawal) and reads them through the instructions sysvar. Token-2022
+8. **Proofs travel inside the transfer, or in temporary accounts.** A transfer or withdrawal is
+   one v1 transaction (up to 4,096 bytes) in both SDKs: the proof-verification instructions sit
+   next to the transfer or withdraw instruction, which names them by offset and reads them through
+   the instructions sysvar (TypeScript puts them before it, at −3, −2, −1 for a transfer and −2,
+   −1 for a withdrawal; Rust after it, at 1, 2, 3 and 1, 2, as `spl-token-2022`'s builders do). Token-2022
    checks that each offset points to an instruction of the ZK ElGamal Proof Program of the
    expected proof type, and takes the proof's context from it. No proof account exists, so none
    can be left behind. The transaction is simulated with the largest limits before anything is
    signed; its compute units (+20%) and loaded account data (+10%) are set from that simulation.
-   When it would be larger than 4,096 bytes or 64 accounts (a transfer hook that asks for many
-   accounts), when the caller sets `singleTransaction: false` (a wallet or RPC without v1
-   transactions), and always in Rust, each proof goes into a proof account instead: a fresh
+   Rust builds the v1 message with `solana-message` 6 and signs and sends it as bytes, because
+   the Solana client crates it pins predate v1 messages; a unit test reads the message back with
+   the same crate. When it would be larger than 4,096 bytes or 64 accounts (a transfer hook that
+   asks for many accounts), or the caller sets `singleTransaction: false` (TypeScript) or
+   `with_single_transaction(false)` (Rust), for a wallet or RPC without v1 transactions, each proof
+   goes into a proof account instead: a fresh
    keypair whose authority is the payer, closed after the transfer or withdrawal, or as soon as a
    step fails; `recoverProofAccounts` closes any that a stopped process left. (`reliability.test.ts`,
-   `transferHook.test.ts`; `recovers_proof_accounts_left_behind`,
-   `goes_through_a_transfer_hook_and_cleans_up_when_the_hook_refuses`)
+   `transferHook.test.ts`; `transfers_and_withdraws_with_an_auditor_and_a_priority_fee`,
+   `recovers_proof_accounts_left_behind`,
+   `goes_through_a_transfer_hook_and_cleans_up_when_the_hook_refuses`, `v1::tests`)
 9. **The SDK never sends an operation twice by itself.** Retries (TypeScript `retries`, Rust
    `with_max_retries`) only follow `TRANSACTION_EXPIRED`, which since finding 2 means the RPC has
    no record of the transaction after its blockhash expired. A transaction that landed after its
@@ -259,7 +264,7 @@ finding reproduced before it was fixed.
 
 | # | Finding | Effect | Status |
 |---|---|---|---|
-| 17 | A transfer took five transactions and a withdrawal four, sent one after another, each waiting for its confirmation. Solana has taken v1 transactions of up to 4,096 bytes since 15 September 2026, and Token-2022 can read proofs from earlier instructions of the same transaction. | Several seconds per payment on mainnet; rent held in proof accounts while they were open; more steps that can fail (findings 7 and 11, known limit 13). | Changed in TypeScript: one v1 transaction by default, proof accounts as the fallback (invariant 8). The auditor's reads ask the RPC for v1 transactions, without which a v1 transfer could not be read (invariant 12). Measured on a local validator with Vigilantis as the hook: 2,690 bytes, 14 accounts, about 280,000 compute units. Rust keeps proof accounts until it moves to `solana-message` 4.4 or later, the first with v1 messages. |
+| 17 | A transfer took five transactions and a withdrawal four, sent one after another, each waiting for its confirmation. Solana has taken v1 transactions of up to 4,096 bytes since 15 September 2026, and Token-2022 can read proofs from earlier instructions of the same transaction. | Several seconds per payment on mainnet; rent held in proof accounts while they were open; more steps that can fail (findings 7 and 11, known limit 13). | Changed in TypeScript: one v1 transaction by default, proof accounts as the fallback (invariant 8). The auditor's reads ask the RPC for v1 transactions, without which a v1 transfer could not be read (invariant 12). Measured on a local validator with Vigilantis as the hook: 2,690 bytes, 14 accounts, about 280,000 compute units. Rust followed in the crate's 1.0.0-rc.2, with the message built by `solana-message` 6 (the pinned client crates predate v1): the same 2,690 bytes and 14 accounts through Sentinel. |
 
 ## How the invariants are tested
 

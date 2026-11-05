@@ -91,6 +91,7 @@ pub struct ConfidentialClient {
     payer: Arc<dyn Signer + Send + Sync>,
     compute_unit_price: Option<u64>,
     max_retries: u32,
+    single_transaction: bool,
 }
 
 /// The result of [`ConfidentialClient::configure_account`].
@@ -107,12 +108,14 @@ pub struct ConfigureAccountResult {
 pub struct TransferResult {
     pub source_token_account: Pubkey,
     pub destination_token_account: Pubkey,
-    /// Every transaction, in order: the proofs, the transfer, and any separate cleanup.
+    /// Every transaction, in order: just the transfer when it went in one transaction; otherwise
+    /// the proofs, the transfer, and any separate cleanup.
     pub signatures: Vec<Signature>,
     /// The transaction with the Token-2022 transfer.
     pub transfer_signature: Signature,
     /// Proof accounts that may still be open although the transfer went through, because closing
-    /// them in a separate transaction failed or its outcome is unknown. Normally empty: the
+    /// them in a separate transaction failed or its outcome is unknown. Always empty when the
+    /// transfer went in one transaction, and normally empty otherwise: the
     /// transfer closes them in its own transaction when they fit, and otherwise a separate
     /// transaction does. [`ConfidentialClient::recover_proof_accounts`] closes them.
     pub proof_accounts_left_open: Vec<Pubkey>,
@@ -268,6 +271,78 @@ pub struct PendingBalanceUpdate {
     pub new_decryptable_available_balance: [u8; 36],
 }
 
+/// A transfer's proofs, generated and not yet sent anywhere.
+struct TransferProofs {
+    data: TransferProofData,
+    new_decryptable_available_balance: [u8; 36],
+}
+
+impl TransferProofs {
+    /// The transfer with its three proofs inside the same transaction: the Token-2022 transfer
+    /// first, then the proof verifications it reads at offsets 1, 2 and 3. Add the transfer
+    /// hook's accounts to the first instruction.
+    fn inline_instructions(
+        &self,
+        mint: &Pubkey,
+        source: &Pubkey,
+        destination: &Pubkey,
+        authority: &Pubkey,
+    ) -> Result<Vec<Instruction>> {
+        let validity = &self.data.ciphertext_validity_proof_data_with_ciphertext;
+        ct_instruction::transfer(
+            &TOKEN_2022_PROGRAM_ID,
+            source,
+            mint,
+            destination,
+            &PodAeCiphertext(self.new_decryptable_available_balance),
+            &validity.ciphertext_lo,
+            &validity.ciphertext_hi,
+            authority,
+            &[],
+            ProofLocation::InstructionOffset(offset(1), &self.data.equality_proof_data),
+            ProofLocation::InstructionOffset(offset(2), &validity.proof_data),
+            ProofLocation::InstructionOffset(offset(3), &self.data.range_proof_data),
+        )
+        .map_err(|e| build_error("transfer", e))
+    }
+}
+
+/// A withdraw's proofs, generated and not yet sent anywhere.
+struct WithdrawProofs {
+    data: WithdrawProofData,
+    amount: u64,
+    decimals: u8,
+    new_decryptable_available_balance: [u8; 36],
+}
+
+impl WithdrawProofs {
+    /// The withdraw with its two proofs inside the same transaction, at offsets 1 and 2.
+    fn inline_instructions(
+        &self,
+        mint: &Pubkey,
+        token: &Pubkey,
+        authority: &Pubkey,
+    ) -> Result<Vec<Instruction>> {
+        ct_instruction::withdraw(
+            &TOKEN_2022_PROGRAM_ID,
+            token,
+            mint,
+            self.amount,
+            self.decimals,
+            &PodAeCiphertext(self.new_decryptable_available_balance),
+            authority,
+            &[],
+            ProofLocation::InstructionOffset(offset(1), &self.data.equality_proof_data),
+            ProofLocation::InstructionOffset(offset(2), &self.data.range_proof_data),
+        )
+        .map_err(|e| build_error("withdraw", e))
+    }
+}
+
+fn offset(n: i8) -> std::num::NonZeroI8 {
+    std::num::NonZeroI8::new(n).expect("a proof offset is not zero")
+}
+
 impl ConfidentialClient {
     /// A client over `rpc`, with `payer` paying fees and proof-account rent. Use an RPC client
     /// with `confirmed` commitment unless you have a reason not to.
@@ -277,6 +352,7 @@ impl ConfidentialClient {
             payer,
             compute_unit_price: None,
             max_retries: 0,
+            single_transaction: true,
         }
     }
 
@@ -291,6 +367,17 @@ impl ConfidentialClient {
     /// confirmed. Default 0.
     pub fn with_max_retries(mut self, retries: u32) -> Self {
         self.max_retries = retries;
+        self
+    }
+
+    /// Whether [`Self::transfer`] and [`Self::withdraw`] send their proofs inside the transfer's
+    /// or withdraw's own transaction, a v1 transaction of up to 4,096 bytes (default `true`).
+    /// With `false` they verify the proofs into proof accounts first, in separate transactions,
+    /// for an RPC that does not take v1 transactions. Either way they fall back to proof accounts
+    /// by themselves when one transaction would be too large (a transfer hook with many
+    /// accounts).
+    pub fn with_single_transaction(mut self, single_transaction: bool) -> Self {
+        self.single_transaction = single_transaction;
         self
     }
 
@@ -487,13 +574,19 @@ impl ConfidentialClient {
 
     /// Confidentially transfer `amount` from the owner's account to `destination_owner`'s.
     ///
-    /// The three proofs are verified into proof accounts first (four transactions), then the
-    /// transfer closes them in its own transaction. If a step fails, the proof accounts created
-    /// so far are closed and the error says which ([`Error::proof_accounts`]). The amount is also
-    /// encrypted to the mint's auditor, when it has one, and a mint's transfer hook gets the
-    /// accounts it asks for, unless it asks for a signer of the transfer
+    /// By default the transfer goes in one v1 transaction (up to 4,096 bytes) with its three
+    /// proofs inside: one signature from the owner, one from the payer when it is someone else,
+    /// no proof accounts and nothing to clean up if it fails. The compute budget is set from a
+    /// simulation. When that one transaction would be too large (a transfer hook with many
+    /// accounts), or [`Self::with_single_transaction`] turned it off, the proofs are verified into
+    /// proof accounts first (four transactions), then the transfer closes them in its own
+    /// transaction; if a step fails, the proof accounts created so far are closed and the error
+    /// says which ([`Error::proof_accounts`]).
+    ///
+    /// The amount is also encrypted to the mint's auditor, when it has one, and a mint's transfer
+    /// hook gets the accounts it asks for, unless it asks for a signer of the transfer
     /// ([`Self::transfer_hook_accounts`]). Every check, the hook's accounts included, comes before
-    /// the proofs are paid for.
+    /// anything is sent.
     pub async fn transfer(
         &self,
         owner: &(dyn Signer + Sync),
@@ -509,9 +602,9 @@ impl ConfidentialClient {
         let destination = self.token_account(destination_owner, mint);
         let keys = ConfidentialKeys::derive(owner).map_err(|e| e.within(operation))?;
 
-        // The transfer hook's accounts are resolved and checked before the proofs are paid for.
-        let (prepared, hook_accounts) = self
-            .prepare_transfer_inner(
+        // The transfer hook's accounts are resolved and checked before the proofs are made.
+        let (proofs, hook_accounts) = self
+            .transfer_proofs(
                 operation,
                 mint,
                 &mint_info,
@@ -521,6 +614,30 @@ impl ConfidentialClient {
                 amount,
                 Some(&owner_key),
             )
+            .await?;
+        if self.single_transaction {
+            let mut instructions = proofs
+                .inline_instructions(mint, &source, &destination, &owner_key)
+                .map_err(|e| e.within(operation))?;
+            instructions[0]
+                .accounts
+                .extend(hook_accounts.iter().cloned());
+            if let Some(signature) = self
+                .sender(operation)
+                .send_single(&instructions, &[owner], operation)
+                .await?
+            {
+                return Ok(TransferResult {
+                    source_token_account: source,
+                    destination_token_account: destination,
+                    signatures: vec![signature],
+                    transfer_signature: signature,
+                    proof_accounts_left_open: Vec::new(),
+                });
+            }
+        }
+        let prepared = self
+            .transfer_proof_accounts(operation, mint, &source, &destination, proofs)
             .await?;
         let mut instruction = prepared
             .instruction(&owner_key)
@@ -545,7 +662,8 @@ impl ConfidentialClient {
     }
 
     /// Move `amount` of the owner's available confidential balance back to the public balance.
-    /// Two proofs (three transactions), then the withdraw; cleanup as in [`Self::transfer`].
+    /// One v1 transaction with its two proofs inside, as in [`Self::transfer`]; otherwise two
+    /// proof transactions and a third that withdraws, with the cleanup of [`Self::transfer`].
     pub async fn withdraw(
         &self,
         owner: &(dyn Signer + Sync),
@@ -559,8 +677,28 @@ impl ConfidentialClient {
         let token = self.token_account(&owner_key, mint);
         let keys = ConfidentialKeys::derive(owner).map_err(|e| e.within(operation))?;
 
+        let proofs = self
+            .withdraw_proofs(operation, &mint_info, mint, &token, &keys, amount)
+            .await?;
+        if self.single_transaction {
+            let instructions = proofs
+                .inline_instructions(mint, &token, &owner_key)
+                .map_err(|e| e.within(operation))?;
+            if let Some(signature) = self
+                .sender(operation)
+                .send_single(&instructions, &[owner], operation)
+                .await?
+            {
+                return Ok(WithdrawResult {
+                    token_account: token,
+                    signatures: vec![signature],
+                    withdraw_signature: signature,
+                    proof_accounts_left_open: Vec::new(),
+                });
+            }
+        }
         let prepared = self
-            .prepare_withdraw_inner(operation, mint, &mint_info, &token, &keys, amount)
+            .withdraw_proof_accounts(operation, mint, &token, proofs)
             .await?;
         let instruction = prepared
             .instruction(&owner_key)
@@ -656,8 +794,8 @@ impl ConfidentialClient {
         let operation = "prepare_transfer";
         check_amount(amount, operation, true)?;
         let mint_info = read_mint(&self.rpc, &TOKEN_2022_PROGRAM_ID, mint, operation).await?;
-        let (prepared, _) = self
-            .prepare_transfer_inner(
+        let (proofs, _) = self
+            .transfer_proofs(
                 operation,
                 mint,
                 &mint_info,
@@ -668,7 +806,14 @@ impl ConfidentialClient {
                 None,
             )
             .await?;
-        Ok(prepared)
+        self.transfer_proof_accounts(
+            operation,
+            mint,
+            source_token_account,
+            destination_token_account,
+            proofs,
+        )
+        .await
     }
 
     /// Generate the proofs of a withdraw and verify them into proof accounts.
@@ -682,7 +827,10 @@ impl ConfidentialClient {
         let operation = "prepare_withdraw";
         check_amount(amount, operation, false)?;
         let mint_info = read_mint(&self.rpc, &TOKEN_2022_PROGRAM_ID, mint, operation).await?;
-        self.prepare_withdraw_inner(operation, mint, &mint_info, token_account, keys, amount)
+        let proofs = self
+            .withdraw_proofs(operation, &mint_info, mint, token_account, keys, amount)
+            .await?;
+        self.withdraw_proof_accounts(operation, mint, token_account, proofs)
             .await
     }
 
@@ -808,8 +956,10 @@ impl ConfidentialClient {
 
     // ---------------------------------------------------------------------------------------
 
+    /// Check a transfer and generate its proofs, with nothing sent yet. For a transfer this client
+    /// signs (`hook_authority`), also the transfer hook's accounts, checked.
     #[allow(clippy::too_many_arguments)]
-    async fn prepare_transfer_inner(
+    async fn transfer_proofs(
         &self,
         operation: &'static str,
         mint: &Pubkey,
@@ -819,7 +969,7 @@ impl ConfidentialClient {
         destination: &Pubkey,
         amount: u64,
         hook_authority: Option<&Pubkey>,
-    ) -> Result<(PreparedTransfer, Vec<AccountMeta>)> {
+    ) -> Result<(TransferProofs, Vec<AccountMeta>)> {
         // Everything Token-2022 would refuse is checked before the proofs are paid for.
         mint_info.assert_not_paused(mint, operation)?;
         mint_info.assert_no_transfer_fee(mint, source, destination, operation)?;
@@ -858,11 +1008,7 @@ impl ConfidentialClient {
             available_balance: source_ct.available_balance,
             decryptable_available_balance: PodAeCiphertext::from(keys.ae.encrypt(available)),
         };
-        let TransferProofData {
-            equality_proof_data,
-            ciphertext_validity_proof_data_with_ciphertext: validity,
-            range_proof_data,
-        } = info
+        let data = info
             .generate_split_transfer_proof_data(
                 amount,
                 &keys.elgamal,
@@ -874,7 +1020,27 @@ impl ConfidentialClient {
         let new_balance = info
             .new_decryptable_available_balance(amount, &keys.ae)
             .map_err(|e| proof_error(operation, e))?;
+        let proofs = TransferProofs {
+            data,
+            new_decryptable_available_balance: PodAeCiphertext::from(new_balance).0,
+        };
+        Ok((proofs, hook_accounts))
+    }
 
+    /// Verify a transfer's proofs into proof accounts paid by the payer.
+    async fn transfer_proof_accounts(
+        &self,
+        operation: &'static str,
+        mint: &Pubkey,
+        source: &Pubkey,
+        destination: &Pubkey,
+        proofs: TransferProofs,
+    ) -> Result<PreparedTransfer> {
+        let TransferProofData {
+            equality_proof_data,
+            ciphertext_validity_proof_data_with_ciphertext: validity,
+            range_proof_data,
+        } = proofs.data;
         let sender = self.sender(operation);
         let mut setup = ProofSetup::new(&sender);
         let created = async {
@@ -906,30 +1072,30 @@ impl ConfidentialClient {
             Ok(accounts) => accounts,
             Err(e) => return Err(setup.fail(e).await),
         };
-        let prepared = PreparedTransfer {
+        Ok(PreparedTransfer {
             mint: *mint,
             source_token_account: *source,
             destination_token_account: *destination,
             equality_proof,
             ciphertext_validity_proof,
             range_proof,
-            new_decryptable_available_balance: PodAeCiphertext::from(new_balance).0,
+            new_decryptable_available_balance: proofs.new_decryptable_available_balance,
             auditor_ciphertext_lo: validity.ciphertext_lo.0,
             auditor_ciphertext_hi: validity.ciphertext_hi.0,
             signatures: setup.signatures,
-        };
-        Ok((prepared, hook_accounts))
+        })
     }
 
-    async fn prepare_withdraw_inner(
+    /// Check a withdraw and generate its proofs, with nothing sent yet.
+    async fn withdraw_proofs(
         &self,
         operation: &'static str,
-        mint: &Pubkey,
         mint_info: &MintInfo,
+        mint: &Pubkey,
         token: &Pubkey,
         keys: &ConfidentialKeys,
         amount: u64,
-    ) -> Result<PreparedWithdraw> {
+    ) -> Result<WithdrawProofs> {
         mint_info.assert_not_paused(mint, operation)?;
         let decimals = mint_info.decimals;
         let (_, ct) = read_configured_account(&self.rpc, token, mint, operation, "your").await?;
@@ -944,16 +1110,32 @@ impl ConfidentialClient {
             available_balance: ct.available_balance,
             decryptable_available_balance: PodAeCiphertext::from(keys.ae.encrypt(available)),
         };
-        let WithdrawProofData {
-            equality_proof_data,
-            range_proof_data,
-        } = info
+        let data = info
             .generate_proof_data(amount, &keys.elgamal, &keys.ae)
             .map_err(|e| proof_error(operation, e))?;
         let new_balance = info
             .new_decryptable_available_balance(amount, &keys.ae)
             .map_err(|e| proof_error(operation, e))?;
+        Ok(WithdrawProofs {
+            data,
+            amount,
+            decimals,
+            new_decryptable_available_balance: PodAeCiphertext::from(new_balance).0,
+        })
+    }
 
+    /// Verify a withdraw's proofs into proof accounts paid by the payer.
+    async fn withdraw_proof_accounts(
+        &self,
+        operation: &'static str,
+        mint: &Pubkey,
+        token: &Pubkey,
+        proofs: WithdrawProofs,
+    ) -> Result<PreparedWithdraw> {
+        let WithdrawProofData {
+            equality_proof_data,
+            range_proof_data,
+        } = proofs.data;
         let sender = self.sender(operation);
         let mut setup = ProofSetup::new(&sender);
         let created = async {
@@ -981,11 +1163,11 @@ impl ConfidentialClient {
         Ok(PreparedWithdraw {
             mint: *mint,
             token_account: *token,
-            amount,
-            decimals,
+            amount: proofs.amount,
+            decimals: proofs.decimals,
             equality_proof,
             range_proof,
-            new_decryptable_available_balance: PodAeCiphertext::from(new_balance).0,
+            new_decryptable_available_balance: proofs.new_decryptable_available_balance,
             signatures: setup.signatures,
         })
     }

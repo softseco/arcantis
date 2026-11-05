@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BUSL-1.1
 [package]
 name = "arcantis"
-version = "1.0.0-rc.1"
+version = "1.0.0-rc.2"
 edition = "2021"
 # The oldest Rust the pinned Solana crates accept (several declare 1.89), checked with
 # `cargo +1.89 check`.
@@ -56,13 +56,21 @@ solana-zk-elgamal-proof-interface = "=0.1.3"
 solana-zk-sdk-pod = "=0.1.2"
 solana-compute-budget-interface = "=3.0.0"
 solana-system-interface = { version = "=3.2.0", features = ["bincode"] }
+# V1 transactions (SIMD-0385, up to 4,096 bytes) for a transfer or withdraw in one transaction. The
+# Solana client crates pinned above predate them, so only the message is built with this newer
+# crate; the transaction is signed and sent as bytes.
+solana-message = { version = "=6.0.0", default-features = false, features = ["std", "wincode"] }
 bytemuck = "1.25"
+# Already in the tree through solana-client; used directly to send a v1 transaction as base64.
+base64 = "0.22"
+serde_json = "1"
 # Already in the tree through solana-client; used directly to wait between confirmation polls.
 tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-serde_json = "1"
+# To read a v1 message back in a unit test.
+wincode = "0.6"
 bs58 = "0.5"
 # The versions spl-token-2022 resolves to, to build a transfer hook's account list in a unit test.
 spl-tlv-account-resolution = "=0.11.1"

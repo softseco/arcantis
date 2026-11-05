@@ -19,6 +19,7 @@ use solana_zk_sdk_pod::encryption::{
 use spl_token_2022_interface::extension::confidential_transfer::instruction as ct_instruction;
 
 const COMPUTE_BUDGET: Pubkey = solana_sdk::pubkey!("ComputeBudget111111111111111111111111111111");
+const ZK_PROOF_PROGRAM: Pubkey = solana_sdk::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
 
 #[tokio::test]
 async fn transfers_and_withdraws_with_an_auditor_and_a_priority_fee() {
@@ -64,9 +65,9 @@ async fn transfers_and_withdraws_with_an_auditor_and_a_priority_fee() {
         .await
         .unwrap();
     assert_eq!(
-        sent.signatures.len(),
-        5,
-        "four proof transactions and the transfer"
+        sent.signatures,
+        vec![sent.transfer_signature],
+        "one transaction, the proofs inside"
     );
     client
         .apply_pending_balance(&bob, &mint.mint)
@@ -75,7 +76,24 @@ async fn transfers_and_withdraws_with_an_auditor_and_a_priority_fee() {
     assert_eq!(client.decrypt_balance(&bob, &mint.mint).await.unwrap(), 400);
 
     // The auditor reads the amount from the transfer instruction.
-    let (data, programs) = token_instruction(&rpc, &sent.transfer_signature, [27, 7]).await;
+    let sent_tx = sent_transaction(&rpc, &sent.transfer_signature).await;
+    assert_eq!(sent_tx.version, 1, "a v1 transaction");
+    assert_eq!(
+        sent_tx.programs_called(),
+        vec![
+            TOKEN_2022_PROGRAM_ID,
+            ZK_PROOF_PROGRAM,
+            ZK_PROOF_PROGRAM,
+            ZK_PROOF_PROGRAM
+        ],
+        "the transfer, then its three proofs"
+    );
+    assert!(
+        sent_tx.size <= 4096,
+        "{} bytes, within a v1 transaction",
+        sent_tx.size
+    );
+    let data = sent_tx.token_instruction([27, 7]);
     let ciphertext = |range: std::ops::Range<usize>| {
         ElGamalCiphertext::try_from(PodElGamalCiphertext(data[range].try_into().unwrap())).unwrap()
     };
@@ -84,11 +102,57 @@ async fn transfers_and_withdraws_with_an_auditor_and_a_priority_fee() {
         400
     );
     assert!(
-        programs.contains(&COMPUTE_BUDGET),
+        sent_tx.priority_fee.is_some_and(|fee| fee > 0),
         "the transfer transaction carries the priority fee"
     );
 
     let withdrawn = client.withdraw(&alice, &mint.mint, 100).await.unwrap();
+    assert_eq!(
+        withdrawn.signatures,
+        vec![withdrawn.withdraw_signature],
+        "one transaction, the proofs inside"
+    );
+    let withdraw_tx = sent_transaction(&rpc, &withdrawn.withdraw_signature).await;
+    assert_eq!(
+        withdraw_tx.programs_called(),
+        vec![TOKEN_2022_PROGRAM_ID, ZK_PROOF_PROGRAM, ZK_PROOF_PROGRAM],
+        "the withdraw, then its two proofs"
+    );
+    assert_eq!(
+        client.decrypt_balance(&alice, &mint.mint).await.unwrap(),
+        500
+    );
+    assert_eq!(public_balance(&rpc, &alice_account).await, 100);
+
+    // With proof accounts instead (an RPC without v1 transactions): five transactions for a
+    // transfer and four for a withdraw, with the priority fee as an instruction.
+    let separate = ConfidentialClient::new(rpc.clone(), payer.clone())
+        .with_compute_unit_price(1_000)
+        .with_single_transaction(false);
+    let sent = separate
+        .transfer(&alice, &mint.mint, &bob.pubkey(), 50)
+        .await
+        .unwrap();
+    assert_eq!(
+        sent.signatures.len(),
+        5,
+        "four proof transactions and the transfer"
+    );
+    let sent_tx = sent_transaction(&rpc, &sent.transfer_signature).await;
+    assert_ne!(sent_tx.version, 1);
+    assert!(
+        sent_tx.programs.contains(&COMPUTE_BUDGET),
+        "the transfer transaction carries the priority fee"
+    );
+    let data = sent_tx.token_instruction([27, 7]);
+    let ciphertext = |range: std::ops::Range<usize>| {
+        ElGamalCiphertext::try_from(PodElGamalCiphertext(data[range].try_into().unwrap())).unwrap()
+    };
+    assert_eq!(
+        decrypt_auditor_amount(&auditor, &ciphertext(38..102), &ciphertext(102..166)).unwrap(),
+        50
+    );
+    let withdrawn = separate.withdraw(&alice, &mint.mint, 50).await.unwrap();
     assert_eq!(
         withdrawn.signatures.len(),
         4,
@@ -96,9 +160,9 @@ async fn transfers_and_withdraws_with_an_auditor_and_a_priority_fee() {
     );
     assert_eq!(
         client.decrypt_balance(&alice, &mint.mint).await.unwrap(),
-        500
+        400
     );
-    assert_eq!(public_balance(&rpc, &alice_account).await, 100);
+    assert_eq!(public_balance(&rpc, &alice_account).await, 150);
 
     // Every proof account was closed, and its rent went back to the payer.
     assert_eq!(proof_accounts_of(&rpc, &payer.pubkey()).await, 0);
@@ -413,9 +477,29 @@ async fn goes_through_a_transfer_hook_and_cleans_up_when_the_hook_refuses() {
         .await
         .unwrap();
 
-    // The proofs go through, then the hook refuses the transfer: the crate closes the proof
-    // accounts and says which step failed.
+    // In one transaction, the hook's refusal shows in the simulation: nothing is sent, and
+    // there are no proof accounts to clean up.
     let refused = client
+        .transfer(&alice, &mint.mint, &bob.pubkey(), 300)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), ErrorCode::TransactionFailed, "{refused}");
+    assert_eq!(refused.step(), Some("transfer"));
+    assert!(
+        refused
+            .logs()
+            .iter()
+            .any(|l| l.contains(&format!("Program {SENTINEL} invoke"))),
+        "Sentinel ran as the hook"
+    );
+    assert!(refused.proof_accounts().is_none());
+    assert!(refused.signatures().is_empty(), "nothing was sent");
+
+    // With proof accounts, the proofs go through, then the hook refuses the transfer: the crate
+    // closes the proof accounts and says which step failed.
+    let separate =
+        ConfidentialClient::new(rpc.clone(), payer.clone()).with_single_transaction(false);
+    let refused = separate
         .transfer(&alice, &mint.mint, &bob.pubkey(), 300)
         .await
         .unwrap_err();
@@ -447,10 +531,17 @@ async fn goes_through_a_transfer_hook_and_cleans_up_when_the_hook_refuses() {
         .transfer(&alice, &mint.mint, &bob.pubkey(), 300)
         .await
         .unwrap();
-    let (_, programs) = token_instruction(&rpc, &sent.transfer_signature, [27, 7]).await;
+    assert_eq!(sent.signatures.len(), 1, "one transaction through the hook");
+    let sent_tx = sent_transaction(&rpc, &sent.transfer_signature).await;
+    assert_eq!(sent_tx.version, 1);
     assert!(
-        programs.contains(&SENTINEL),
+        sent_tx.programs.contains(&SENTINEL),
         "the transfer passed Sentinel's accounts"
+    );
+    eprintln!(
+        "a confidential transfer through the hook: {} bytes, {} accounts",
+        sent_tx.size,
+        sent_tx.programs.len()
     );
     client
         .apply_pending_balance(&bob, &mint.mint)
@@ -516,37 +607,115 @@ fn code<T>(result: arcantis::Result<T>) -> ErrorCode {
     }
 }
 
-/// The data of the Token-2022 instruction starting with `prefix` in a transaction, and every
-/// program the transaction's instructions name (including accounts passed to them).
-async fn token_instruction(
+/// A sent transaction as the chain has it: its version (`1`, or `0` for legacy and v0), its size,
+/// every account it names, its instructions, and the priority fee of a v1 transaction.
+struct SentTransaction {
+    version: u8,
+    size: usize,
+    programs: Vec<Pubkey>,
+    instructions: Vec<(Pubkey, Vec<u8>)>,
+    priority_fee: Option<u64>,
+}
+
+impl SentTransaction {
+    /// The data of the Token-2022 instruction starting with `prefix`.
+    fn token_instruction(&self, prefix: [u8; 2]) -> Vec<u8> {
+        self.instructions
+            .iter()
+            .find(|(program, data)| *program == TOKEN_2022_PROGRAM_ID && data.starts_with(&prefix))
+            .expect("the instruction")
+            .1
+            .clone()
+    }
+
+    /// The program of each instruction, in order.
+    fn programs_called(&self) -> Vec<Pubkey> {
+        self.instructions
+            .iter()
+            .map(|(program, _)| *program)
+            .collect()
+    }
+}
+
+/// Read a transaction of any version. The pinned client cannot decode v1 transactions, so it is
+/// asked for as base64 and a v1 one is read with `solana-message` 6.
+async fn sent_transaction(
     rpc: &solana_client::nonblocking::rpc_client::RpcClient,
     signature: &Signature,
-    prefix: [u8; 2],
-) -> (Vec<u8>, Vec<Pubkey>) {
-    use solana_client::rpc_config::{RpcTransactionConfig, UiTransactionEncoding};
-    let tx = rpc
-        .get_transaction_with_config(
-            signature,
-            RpcTransactionConfig {
-                encoding: Some(UiTransactionEncoding::Base64),
-                commitment: Some(rpc.commitment()),
-                max_supported_transaction_version: Some(0),
-            },
+) -> SentTransaction {
+    use base64::Engine as _;
+    use solana_client::rpc_request::RpcRequest;
+    let response: serde_json::Value = rpc
+        .send(
+            RpcRequest::GetTransaction,
+            serde_json::json!([
+                signature.to_string(),
+                {"encoding": "base64", "commitment": "confirmed", "maxSupportedTransactionVersion": 1}
+            ]),
         )
         .await
         .unwrap();
-    let tx = tx.transaction.transaction.decode().unwrap();
-    let keys = tx.message.static_account_keys();
-    let data = tx
-        .message
-        .instructions()
-        .iter()
-        .find(|ix| {
-            keys[usize::from(ix.program_id_index)] == arcantis::TOKEN_2022_PROGRAM_ID
-                && ix.data.starts_with(&prefix)
-        })
-        .expect("the instruction")
-        .data
-        .clone();
-    (data, keys.to_vec())
+    let wire = base64::engine::general_purpose::STANDARD
+        .decode(
+            response["transaction"][0]
+                .as_str()
+                .expect("a base64 transaction"),
+        )
+        .unwrap();
+    if wire[0] == 0x81 {
+        let signatures = usize::from(wire[1]);
+        let message: solana_message::VersionedMessage =
+            wincode::deserialize(&wire[..wire.len() - 64 * signatures]).unwrap();
+        let solana_message::VersionedMessage::V1(message) = message else {
+            panic!("not a v1 message")
+        };
+        let keys: Vec<Pubkey> = message
+            .account_keys
+            .iter()
+            .map(|k| Pubkey::new_from_array(k.to_bytes()))
+            .collect();
+        let instructions = message
+            .instructions
+            .iter()
+            .map(|ix| (keys[usize::from(ix.program_id_index)], ix.data.clone()))
+            .collect();
+        SentTransaction {
+            version: 1,
+            size: wire.len(),
+            programs: keys,
+            instructions,
+            priority_fee: message.config.priority_fee,
+        }
+    } else {
+        use solana_client::rpc_config::{RpcTransactionConfig, UiTransactionEncoding};
+        let tx = rpc
+            .get_transaction_with_config(
+                signature,
+                RpcTransactionConfig {
+                    encoding: Some(UiTransactionEncoding::Base64),
+                    commitment: Some(rpc.commitment()),
+                    max_supported_transaction_version: Some(0),
+                },
+            )
+            .await
+            .unwrap()
+            .transaction
+            .transaction
+            .decode()
+            .unwrap();
+        let keys = tx.message.static_account_keys().to_vec();
+        let instructions = tx
+            .message
+            .instructions()
+            .iter()
+            .map(|ix| (keys[usize::from(ix.program_id_index)], ix.data.clone()))
+            .collect();
+        SentTransaction {
+            version: 0,
+            size: wire.len(),
+            programs: keys,
+            instructions,
+            priority_fee: None,
+        }
+    }
 }

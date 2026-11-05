@@ -10,6 +10,44 @@ This repository holds Arcantis: the TypeScript package `@softseco/arcantis` and 
 the two were released together under one version, and from 2.1.0 each had its own versions: the
 TypeScript package tagged `vX.Y.Z`, the Rust crate `rust-vX.Y.Z` (entries headed `rust-X.Y.Z`).
 
+## [Unreleased]
+
+The Rust crate `arcantis` 1.0.0-rc.2 (in development). The TypeScript package is unchanged.
+
+### Added
+
+- **Rust: a transfer or withdrawal in one transaction**, as in the TypeScript package since
+  1.0.0-rc.1. `transfer` and `withdraw` send the proof verifications and the transfer or withdraw
+  together, in one v1 transaction of up to 4,096 bytes (SIMD-0385), instead of five or four sent
+  one after another: no proof accounts, no rent held while they are open, nothing to clean up when
+  the chain refuses. The transaction is simulated with the largest limits before it is signed; its
+  compute-unit limit (+20%) and loaded-account-data limit (+10%) are set from that simulation, and
+  `with_compute_unit_price` becomes the v1 message's priority fee (price times the unit limit,
+  rounded up). The Solana client crates the crate pins predate v1 messages, so the message is
+  compiled with `solana-message` 6.0.0 and the transaction is signed, simulated and sent as bytes
+  through the same `RpcClient`. Measured on a local validator through Sentinel as the transfer
+  hook: 2,690 bytes and 14 accounts, as in TypeScript. Threat model: invariant 8 and finding 17.
+- `ConfidentialClient::with_single_transaction(false)` keeps the proof accounts, for an RPC that
+  does not take v1 transactions. The client also falls back to them by itself, before signing,
+  when one transaction would be too large (a transfer hook with many accounts).
+- Tests: `v1::tests` (the message starts with the v1 version byte, lists its signers payer first,
+  reads back with `solana-message` with its budget and instructions, and does not fit above 4,096
+  bytes or 64 accounts; the budget's arithmetic). The on-chain tests check that a transfer and a withdrawal are
+  one v1 transaction each, with the proofs next to them and the priority fee in the message, that
+  a hook's refusal is caught in simulation with nothing sent, and still cover the proof-account
+  path.
+
+### Changed
+
+- `TransferResult::signatures` and `WithdrawResult::signatures` hold a single signature when the
+  operation went in one transaction, and `proof_accounts_left_open` is then empty. A transfer that
+  a transfer hook or Token-2022 refuses fails in its simulation: nothing is sent, and the error
+  has no proof accounts (`Error::proof_accounts` is `None`).
+- Dependencies: `solana-message` 6.0.0 (with its `wincode` feature) is new; `base64` and
+  `serde_json` are now direct dependencies (they were already in the tree through
+  `solana-client`). `Cargo.lock` moves `solana-address` to 2.9.0, `solana-hash` to 4.7.0 and
+  `solana-pubkey` to 4.4.0, which `solana-message` 6 needs.
+
 ## [1.0.0-rc.1] - 2026-11-03
 
 The release candidate for Arcantis's first independent audit, and the first release under the new

@@ -10,8 +10,9 @@ amounts, in a few calls. The Rust twin of the
 [`@softseco/arcantis`](https://www.npmjs.com/package/@softseco/arcantis)
 TypeScript SDK, with the same keys, the same checks and the same error codes.
 
-> **Status: `1.0.0-rc.1`**, the release candidate for an independent audit, continuing
-> `softseco-confidential-transfers` 3.0.0 under a new name. Arcantis is self-audited, not
+> **Status: `1.0.0-rc.2` in development** (`1.0.0-rc.1` is on crates.io), the release candidate
+> for an independent audit, continuing `softseco-confidential-transfers` 3.0.0 under a new name.
+> New in rc.2: a transfer or withdraw in one transaction, as in the TypeScript SDK. Arcantis is self-audited, not
 > independently audited; the [threat model](https://github.com/softseco/arcantis/blob/main/docs/threat-model.md)
 > and the [audit scope](https://github.com/softseco/arcantis/blob/main/docs/audit-scope.md) say
 > what it protects and what was checked. Configure, deposit, apply, read, transfer and withdraw;
@@ -44,7 +45,7 @@ client.withdraw(&alice, &mint, 100).await?;                // confidential -> pu
 let balance = client.decrypt_balance(&alice, &mint).await?; // 500
 ```
 
-The `payer` pays every fee and the temporary rent of the proof accounts, and gets the rent back.
+The `payer` pays every fee, and the temporary rent of any proof accounts, which it gets back.
 Owners sign their own operations. The client and the futures of its methods are `Send`, so calls
 can be spawned on a multi-threaded runtime.
 
@@ -55,10 +56,17 @@ another version is a different type and does not fit.
 
 What the client takes care of:
 
-- **Proofs.** A transfer needs three zero-knowledge proofs, too large to travel with it. They are
-  verified into temporary proof accounts first (four transactions), and the transfer closes them
-  in its own transaction. A withdraw is the same with two proofs.
-- **Failures partway.** If a step fails after proof accounts were created, the client closes them
+- **One transaction.** A transfer needs three zero-knowledge proofs, a withdraw two. Since
+  September 2026 Solana takes v1 transactions of up to 4,096 bytes, and the client sends the
+  proofs inside the transfer's or withdraw's own transaction: about 2,700 bytes for a transfer
+  through a transfer hook. The compute budget is set from a simulation. No proof accounts, no
+  rent held, nothing to clean up when the chain refuses it.
+- **Proof accounts when needed.** When one transaction would be too large (a transfer hook with
+  many accounts), or `with_single_transaction(false)` asks for it (an RPC that does not take v1
+  transactions), the proofs are verified into temporary proof accounts first (four transactions
+  for a transfer, three for a withdraw), and the transfer closes them in its own transaction.
+- **Failures partway** (with proof accounts). If a step fails after proof accounts were created,
+  the client closes them
   and the error says which step failed and which accounts were closed (`Error::step`,
   `Error::proof_accounts`). `recover_proof_accounts()` closes any left behind by a process that
   stopped: every proof account whose authority is the payer. A range-proof account whose
@@ -75,8 +83,9 @@ What the client takes care of:
 - **The mint's auditor key** is read from the mint, and every amount is encrypted to it.
 - **Transfer hooks.** The accounts a mint's hook needs are resolved and passed along, before the
   proofs are paid for. A hook that asks for the payer or the owner, or for any signer, is refused.
-- **Priority fees** (`with_compute_unit_price`) on every transaction that has room, and resending
-  after an expired blockhash (`with_max_retries`).
+- **Priority fees** (`with_compute_unit_price`, micro-lamports per compute unit) on every
+  transaction that has room, and resending after an expired blockhash (`with_max_retries`). In a
+  v1 transaction the fee is the price times the compute-unit limit, rounded up.
 - **What errors print.** Messages, `Debug` and sources leave out decrypted balances
   (`Error::available_balance` has the one a caller may need) and the RPC URL's path, query and
   user info, where providers put API keys.

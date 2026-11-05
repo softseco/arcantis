@@ -4,9 +4,10 @@
 //! TypeScript SDK, with the same keys, the same checks and the same error codes.
 //!
 //! [`ConfidentialClient`] configures accounts, deposits, applies pending balances, reads
-//! balances, transfers and withdraws. A transfer verifies its proofs into temporary proof
-//! accounts, reads the mint's auditor key and transfer hook, and cleans up after itself when a
-//! step fails.
+//! balances, transfers and withdraws. A transfer or withdraw goes in one v1 transaction with its
+//! proofs inside, or, when that does not fit, verifies them into temporary proof accounts and
+//! cleans up after itself when a step fails. A transfer reads the mint's auditor key and transfer
+//! hook.
 //!
 //! For token accounts owned by a program, [`ConfidentialClient::prepare_transfer`] and its
 //! siblings generate and verify the proofs, and return what the program needs to make the
@@ -38,6 +39,7 @@ pub mod error;
 pub mod keys;
 mod proofs;
 mod send;
+mod v1;
 
 pub use auditor::{decrypt_auditor_amount, derive_auditor_keypair};
 pub use client::{
