@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BUSL-1.1
 [package]
 name = "arcantis"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 edition = "2021"
 # The oldest Rust the pinned Solana crates accept (several declare 1.89), checked with
 # `cargo +1.89 check`.

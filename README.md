@@ -10,7 +10,7 @@ transfers without hand-assembling the primitives.
 
 A Rust crate with the core helpers lives in [`rust/`](#rust).
 
-> **Status: 1.0.0-rc.2**, the release candidate for an independent audit. Arcantis continues
+> **Status: 1.0.0-rc.3**, the release candidate for an independent audit. Arcantis continues
 > `@softseco/confidential-transfers` 3.3.0 (TypeScript) and `softseco-confidential-transfers`
 > 3.0.0 (Rust) under a new name; the functions keep their names. Built on `@solana/kit` 8. The whole flow (configure, deposit, apply,
 > transfer, withdraw) runs end-to-end on **devnet** and against a local validator, in Node and in
@@ -71,6 +71,7 @@ about 0.01 SOL, almost all of it rent that stays with the test mint and the two 
 - **`transfer`** sends an encrypted amount to another account in one transaction, its three proofs (equality, ciphertext-validity, range) inside
 - **`withdraw`** moves tokens from the confidential balance back to the public balance, also in one transaction (equality and range proofs)
 - **`closeAccount`** closes an emptied account and returns its rent deposit
+- **Accounts a program owns**: `prepareConfigure`, `prepareApply`, `prepareWithdraw` and `prepareTransfer` build the instructions with the program's PDA as authority, for the program to check and sign through CPI (an issuer's treasury account, an escrow)
 - **Transfer-hook mints**: `transfer` resolves the mint's transfer-hook accounts, so confidential transfers work on mints that enforce rules through a hook
 - **Auditor selective disclosure**: derive an auditor ElGamal identity and recover transfer amounts on an auditor-enabled mint, without the power to spend
 - **Built for real use**: a transfer is one v1 transaction (up to 4,096 bytes, accepted by Solana since September 2026), so it confirms like any other payment; the fee payer can be a relayer, so the sender needs no SOL. For a wallet that cannot sign v1 transactions, `singleTransaction: false` sends the proofs through proof accounts instead: five transactions signed together (a wallet asks once), closed again if a step fails, and `recoverProofAccounts` cleans up after a process that stopped. Priority fees, retries on expiry, and typed errors (`ConfidentialTransfersError` with a `code`) for every case the SDK checks
@@ -235,6 +236,10 @@ See the [guide for auditors](./guides/auditors.md).
 | `transfer` | Private transfer between accounts, spending what is pending too | `…`, `owner`, `mint`, `destinationOwner` (or `destinationToken`), `amount`, optional `auditorElgamalPubkey`, `destinationElgamalPubkey`, `applyPending` → `{ sourceToken, destinationToken, signatures }` |
 | `withdraw` | Confidential → public balance, spending what is pending too | `…`, `owner`, `mint`, `amount`, `decimals`, optional `applyPending` → `{ token, signatures }` |
 | `closeAccount` | Close an emptied account, rent back | `…`, `owner`, `mint`, optional `destination` → `{ token, signature }` |
+| `prepareConfigure` | For an account a program owns: `Reallocate`, `ConfigureAccount` and the proof after it | `rpc`, `payer`, `token`, `mint`, `authority` (the PDA), `keys` → `Instruction[]` |
+| `prepareApply` | Its pending balance applied, and the balance that leaves | `rpc`, `token`, `authority`, `keys` → `{ instructions, value, availableBalance }` |
+| `prepareWithdraw` | A withdrawal from it in one v1 transaction; with `amount: 0`, a checked apply | `rpc`, `payer`, `mint`, `token`, `authority`, `amount`, `keys` → `Instruction[]` |
+| `prepareTransfer` | A confidential transfer out of it in one v1 transaction, hook accounts included | `rpc`, `payer`, `mint`, `sourceToken`, `authority`, `destinationToken`, `amount`, `keys`, optional `destinationElgamalPubkey` → `Instruction[]` |
 | `deriveAuditorElgamalKeypair` | Derive the auditor's ElGamal keypair from its wallet | `signer` → `ElGamalKeypair` |
 | `getAuditorElgamalPubkey` | Auditor pubkey for a mint's CT config | `auditorKeypair` → `Address` |
 | `decryptTransferAmountAsAuditor` | Recover a transfer's amount as the auditor | `rpc`, `signature`, `auditorKeypair`, optional `mint` → `bigint` |
@@ -308,7 +313,7 @@ full workflow.
 
 ## Project status
 
-`1.0.0-rc.2`, continuing `@softseco/confidential-transfers` 3.3.0 and the Rust crate
+`1.0.0-rc.3`, continuing `@softseco/confidential-transfers` 3.3.0 and the Rust crate
 3.0.0. The TypeScript package covers the full confidential-transfer lifecycle (configure, deposit,
 apply, transfer, withdraw, decrypt), transfer-hook mints and auditor selective disclosure, runs
 end-to-end on devnet, works in web apps with browser wallets, handles failures halfway through a

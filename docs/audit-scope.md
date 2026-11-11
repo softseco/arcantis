@@ -4,10 +4,9 @@ Prepared on 29 October 2026 for Arcantis's first independent audit, updated on 3
 the format checks ([formats.md](./formats.md)), on 2 November after a second review of our own and
 on 3 November for transfers and withdrawals in one transaction, on 5 November for the same in
 the Rust crate (1.0.0-rc.2), and on 6 November for the pending balance applied inside the
-transaction that needs it, the checked apply, the pinned recipient key and `closeAccount`.
-Arcantis is self-audited, not independently audited. The code under audit is the next release
-candidate after `v1.0.0-rc.2` in the public `arcantis` repository: `v1.0.0-rc.2` and the changes
-listed under "Unreleased" in the CHANGELOG, which this document describes.
+transaction that needs it, the checked apply, the pinned recipient key and closing an account
+(1.0.0-rc.3). Arcantis is self-audited, not independently audited. The code under audit is the
+commit tagged `v1.0.0-rc.3` in the public `arcantis` repository, which this document describes.
 
 The threat model ([threat-model.md](./threat-model.md)) is the companion to this page: what
 Arcantis protects, who is trusted, the thirteen invariants and the tests that check them, the known
@@ -18,12 +17,12 @@ what to read, how to build and test it, and how much of it the tests reach.
 
 | Path | What | Lines (code, without blank lines and comments) |
 |---|---|---:|
-| `src/` | The TypeScript package `@softseco/arcantis`: one file per operation (`configureAccount`, `deposit`, `applyPendingBalance`, `decryptBalance`, `transfer`, `withdraw`, `closeAccount`, `recoverProofAccounts`), keys (`keys.ts`), the auditor (`auditor.ts`, `auditorReport.ts`, with the JSON report and its reader), the `arcantis` command (`cli.ts`), the format names (`formats.ts`) and errors. | 1,537 |
+| `src/` | The TypeScript package `@softseco/arcantis`: one file per operation (`configureAccount`, `deposit`, `applyPendingBalance`, `decryptBalance`, `transfer`, `withdraw`, `closeAccount`, `recoverProofAccounts`, and `programAccounts.ts` for accounts a program owns), keys (`keys.ts`), the auditor (`auditor.ts`, `auditorReport.ts`, with the JSON report and its reader), the `arcantis` command (`cli.ts`), the format names (`formats.ts`) and errors. | 1,537 |
 | `src/internal/` | Proof construction (`confidentialTransferProof.ts`, adapted from `@solana-program/token-2022`), ciphertext arithmetic, the pending balance and the apply that travels with a proof (`pendingBalance.ts`), the available-balance check, sending and signing (`send.ts`), transfer-hook resolution, account checks, and the two builds of the zk-sdk loader (`zk.ts` for Node, `zk.web.ts` for browsers). | 1,769 |
-| `rust/src/` | The Rust crate `arcantis`: `ConfidentialClient` (`client.rs`), account checks, proof accounts, sending (`send.rs`, and `v1.rs` for one-transaction transfers), keys, the auditor and errors, with their unit tests. | 3,777 |
+| `rust/src/` | The Rust crate `arcantis`: `ConfidentialClient` (`client.rs`), account checks, proof accounts, sending (`send.rs`, and `v1.rs` for one-transaction transfers), keys, the auditor and errors, with their unit tests. | 3,867 |
 | `package.json`, `package-lock.json`, `rust/Cargo.toml`, `rust/Cargo.lock` | Dependencies and their exact versions. | |
 
-About 7,100 lines in all, 3,300 of them TypeScript (counted on 6 November; the TypeScript figures
+About 7,200 lines in all, 3,300 of them TypeScript (counted on 6 November; the TypeScript figures
 of 29 October had not been updated for the changes of 3 November). The two SDKs do the same things; reading one
 closely and the other for differences is the efficient order, and the shared test vectors
 (`test-vectors/`) pin where they must agree.
@@ -66,10 +65,10 @@ for each.
 | `decryptBalance` | `decrypt_balance`, `decrypt_balance_of`, `decrypt_balance_with_pending` | owner (key message only) | 0 | none; `includePending` adds the pending balance |
 | `transfer` | `transfer`, `transfer_to_known_key` | payer, owner | 1 (a v1 transaction); 5 with proof accounts (the fallback) | `ApplyPendingBalance` first when something is pending (unless `applyPending: false`; Rust `with_apply_pending(false)`), then the three proofs verified from instruction data and `Transfer` with the hook's accounts reading them (TypeScript: proofs before `Transfer`, offsets −3, −2, −1; Rust: `Transfer` before the proofs, offsets 1, 2, 3); the proofs are about the balance after the apply. Or, with nothing applied, the proofs verified into three context accounts, `Transfer`, and the accounts closed. With `destinationElgamalPubkey` (Rust `transfer_to_known_key`) the recipient's key is checked against the expected one before anything is signed |
 | `withdraw` | `withdraw` | payer, owner | 1; 4 with proof accounts | `ApplyPendingBalance` first when something is pending (as for `transfer`), the two proofs and `Withdraw` (amount public) reading them (offsets −2, −1 in TypeScript; 1, 2 in Rust); or, with nothing applied, two context accounts, `Withdraw`, and the accounts closed |
-| `closeAccount` | (not yet) | payer, owner | 1 | `ApplyPendingBalance` if something is pending (it must add up to zero), `VerifyZeroCiphertext` from instruction data, `EmptyAccount` reading it (offset −1) and `CloseAccount`; refused before signing when the account is frozen or holds a public or confidential balance |
+| `closeAccount` | `close_account` | payer, owner | 1 | `ApplyPendingBalance` if something is pending (it must add up to zero), `VerifyZeroCiphertext` from instruction data, `EmptyAccount` reading it (TypeScript: proof first, offset −1; Rust: `EmptyAccount` first, offset 1) and `CloseAccount`; refused before signing when the account is frozen or holds a public or confidential balance |
 | `recoverProofAccounts` | `recover_proof_accounts` | payer | 1 per 8 accounts | `CloseContextState` |
 | `listConfidentialActivity`, `decryptTransferAmountAsAuditor`, `arcantis audit-report` | `decrypt_auditor_amount` | auditor (key message only) | 0 | none |
-| | `prepare_configure`, `prepare_transfer`, `prepare_withdraw`, `pending_balance_update`, `transfer_hook_accounts`, `close_proof_accounts` | payer | proofs only | for a program that makes the Token-2022 calls through CPI |
+| `prepareConfigure`, `prepareApply`, `prepareWithdraw`, `prepareTransfer` | `prepare_configure`, `prepare_transfer`, `prepare_withdraw`, `pending_balance_update`, `transfer_hook_accounts`, `close_proof_accounts` | payer | instructions only (TypeScript: proofs inside a v1 transaction; Rust: proof accounts) | for a program that checks the Token-2022 instructions and makes them through CPI, signed by its PDA |
 
 Every operation that sends transactions first reads the accounts it needs and checks them (threat
 model, invariant 4). An operation that applies the pending balance computes the balance after the
@@ -137,11 +136,11 @@ the client (see `test/fixtures/README.md`).
 |---|---|
 | Install, build, typecheck | `npm ci`, `npm run build`, `npm run typecheck` |
 | Local validator with Token-2022 v11.1.0, Sentinel and the Anchor example | `TOKEN_2022_SO=test/fixtures/spl_token_2022.so SENTINEL_SO=test/fixtures/sentinel.so CONFIDENTIAL_VAULT_SO=rust/examples/anchor-vault/target/deploy/confidential_vault.so npm run validator` |
-| TypeScript tests (135: 106 without a validator, 29 on it) | `CT_LOCAL_PROGRAM=1 npm test` |
+| TypeScript tests (136: 106 without a validator, 30 on it) | `CT_LOCAL_PROGRAM=1 npm test` |
 | TypeScript line coverage | `CT_LOCAL_PROGRAM=1 npm run coverage` |
 | Browser test (the Vite example in Chromium, with a test wallet) | `npm run test:browser` |
 | Rust checks | `cd rust && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo audit` |
-| Rust tests (41: 27 unit, 8 on-chain, the Anchor example, 4 shared vectors, a doctest) | `cd rust && CT_LOCAL_PROGRAM=1 cargo test -- --test-threads 1` |
+| Rust tests (47: 32 unit, 9 on-chain, the Anchor example, 4 shared vectors, a doctest) | `cd rust && CT_LOCAL_PROGRAM=1 cargo test -- --test-threads 1` |
 | Rust line coverage | `cd rust && CT_LOCAL_PROGRAM=1 cargo llvm-cov -- --test-threads 1` |
 | The Anchor example program | `cargo build-sbf --manifest-path rust/examples/anchor-vault/programs/confidential-vault/Cargo.toml` |
 | Proofs against mainnet's ZK ElGamal Proof Program (simulation only) | `MAINNET_RPC=… npm run example:mainnet` |
@@ -151,7 +150,7 @@ CI runs all of these on every push except the coverage and the mainnet check. Wi
 
 ## Coverage
 
-TypeScript measured on 6 November 2026 with all 135 tests, on-chain ones included, against a local
+TypeScript measured on 6 November 2026 with all 136 tests, on-chain ones included, against a local
 validator; its line numbers are from the changes of that day. Rust measured on 30 October, before
 the fixes of 2 November (14 more Rust tests) and the changes of 5 and 6 November (one-transaction
 transfers, the pending balance); its figures and line numbers are from that commit, and it will be
@@ -159,10 +158,10 @@ measured again before the audit starts.
 
 | | TypeScript (`c8`) | Rust (`cargo llvm-cov`) |
 |---|---|---|
-| Tests run | 135 | 26 |
-| Lines reached | 4,587 of 4,684 (97.9%) | 1,387 of 1,700 (81.6%) |
+| Tests run | 136 | 26 |
+| Lines reached | 4,871 of 4,997 (97.5%) | 1,387 of 1,700 (81.6%) |
 | Counted | every line of `src/`, comments included, `src/internal/zk.web.ts` too (a test loads it the way a browser does; the browser test runs it in Chromium) | lines of code in `rust/src/`, the unit-test modules in those files included |
-| Functions reached | 363 of 367 (98.9%; the four left are re-exported constants) | 150 of 207 (72.5%) |
+| Functions reached | 380 of 384 (99.0%; the four left are re-exported constants) | 150 of 207 (72.5%) |
 
 What no test reaches, by theme:
 
@@ -185,7 +184,10 @@ What no test reaches, by theme:
 - **TypeScript only:** the `arcantis` command's usage and error output (`cli.ts` 44–46, 64–76,
   118–119), a pending balance too large to decrypt (`pendingBalance.ts` 74–84, and 179–181, where
   a transfer or withdrawal then spends the available balance only), closing a frozen account
-  (`closeAccount.ts` 80–85; the test mints have no freeze authority), a transfer with fee in the
+  (`closeAccount.ts` 80–85; the test mints have no freeze authority), the refusals of the builders
+  for program-owned accounts (`programAccounts.ts` 74–79, 137–138, 156–162, 223–224, 232–237,
+  292–297: a pending-credit cap out of range, a zero amount, a pinned key that differs, a source or
+  account of another owner), a transfer with fee in the
   auditor's report (`auditorReport.ts` 268–274), and the browser build's error when the
   WebAssembly is not loaded yet (`zk.web.ts` 76–81).
 

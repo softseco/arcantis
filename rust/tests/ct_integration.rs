@@ -437,6 +437,66 @@ async fn spends_what_is_pending_checks_its_apply_and_pins_the_recipient_key() {
     assert_eq!(aes_copy(&rpc, &alice_account, &alice_keys).await, 490);
 }
 
+#[tokio::test]
+async fn closes_an_emptied_account_and_refuses_one_that_still_holds_tokens() {
+    let Some(rpc) = on_chain() else { return };
+    let payer: Arc<dyn Signer + Send + Sync> = Arc::new(funded(&rpc).await);
+    let client = ConfidentialClient::new(rpc.clone(), payer.clone());
+    let mint = create_mint(&rpc, payer.clone(), None, None).await;
+    let carol = funded(&rpc).await;
+    let account = client
+        .configure_account(&carol, &mint.mint)
+        .await
+        .unwrap()
+        .token_account;
+    mint.mint_to(&account, 100).await;
+    client.deposit(&carol, &mint.mint, 100).await.unwrap();
+
+    // 100 pending: refused before anything is signed.
+    assert_eq!(
+        code(client.close_account(&carol, &mint.mint, None).await),
+        ErrorCode::InvalidInput
+    );
+    // Back to the public balance (the pending 100 applied in the same transaction): still refused.
+    client.withdraw(&carol, &mint.mint, 100).await.unwrap();
+    assert_eq!(public_balance(&rpc, &account).await, 100);
+    assert_eq!(
+        code(client.close_account(&carol, &mint.mint, None).await),
+        ErrorCode::InvalidInput
+    );
+    send(
+        &rpc,
+        &[spl_token_2022_interface::instruction::burn_checked(
+            &TOKEN_2022_PROGRAM_ID,
+            &account,
+            &mint.mint,
+            &carol.pubkey(),
+            &[],
+            100,
+            DECIMALS,
+        )
+        .unwrap()],
+        &carol,
+    )
+    .await;
+
+    // Empty now: closed in one transaction, the rent back to Carol.
+    let rent = rpc.get_balance(&account).await.unwrap();
+    let before = rpc.get_balance(&carol.pubkey()).await.unwrap();
+    client
+        .close_account(&carol, &mint.mint, None)
+        .await
+        .unwrap();
+    assert!(
+        rpc.get_account(&account).await.is_err(),
+        "the account is gone"
+    );
+    assert_eq!(
+        rpc.get_balance(&carol.pubkey()).await.unwrap(),
+        before + rent
+    );
+}
+
 /// The owner's AES copy of the available balance, as stored.
 async fn aes_copy(
     rpc: &solana_client::nonblocking::rpc_client::RpcClient,

@@ -1,6 +1,6 @@
 # Arcantis threat model
 
-Version 1.0.0-rc.2, 5 November 2026 (1.0.0-rc.1: 3 November 2026). Written by the author as part of a self-review on 29 October,
+Version 1.0.0-rc.3, 11 November 2026 (1.0.0-rc.2: 5 November; 1.0.0-rc.1: 3 November 2026). Written by the author as part of a self-review on 29 October,
 updated on 30 October with invariant 13 (formats), on 2 November after a second review, and on
 3 November for transfers and withdrawals in one transaction (finding 17). Arcantis is
 self-audited, not independently audited; this document is meant to make that audit faster and cheaper. Versions up to 3.3.0

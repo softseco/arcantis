@@ -10,11 +10,11 @@ This repository holds Arcantis: the TypeScript package `@softseco/arcantis` and 
 the two were released together under one version, and from 2.1.0 each had its own versions: the
 TypeScript package tagged `vX.Y.Z`, the Rust crate `rust-vX.Y.Z` (entries headed `rust-X.Y.Z`).
 
-## [Unreleased]
+## [1.0.0-rc.3] - 2026-11-11
 
 The pending balance applied where it is spent, an apply that cannot leave the balance copies apart,
-a pinned recipient key and closing an account, in both the TypeScript package and the Rust crate
-(closing an account: TypeScript). Self-audited, not independently audited.
+a pinned recipient key and closing an account, in both the TypeScript package and the Rust crate.
+Both move to 1.0.0-rc.3. Self-audited, not independently audited.
 
 ### Added
 
@@ -38,10 +38,16 @@ a pinned recipient key and closing an account, in both the TypeScript package an
   code in both). Threat model: known limit 12.
 - `decryptBalance({ includePending: true })` (TypeScript) and `decrypt_balance_with_pending`
   (Rust): available plus pending, which is what a transfer or withdraw can now spend.
-- `closeAccount` (TypeScript): closes an emptied confidential account and returns its rent
-  deposit, in one transaction (an apply if anything is pending, a zero-ciphertext proof,
-  `EmptyAccount`, `CloseAccount`). Refused while the account holds a public or confidential
-  balance, or is frozen.
+- Accounts a program owns (TypeScript, as the Rust crate's `prepare_*`): `prepareConfigure`,
+  `prepareApply`, `prepareWithdraw` and `prepareTransfer` build the Token-2022 instructions with
+  the program's PDA as authority and the proofs inside the transaction, for the program to check
+  and sign through CPI. The program keeps each Token-2022 instruction at its position, so the proof
+  offsets stay right. `prepareWithdraw` with amount 0 is a checked apply. The eUSD issuance
+  program (PAPER) moves its treasury accounts this way.
+- `closeAccount` (TypeScript) and `close_account` (Rust): close an emptied confidential account
+  and return its rent deposit, in one transaction (an apply if anything is pending, a
+  zero-ciphertext proof, `EmptyAccount`, `CloseAccount`). Refused while the account holds a public
+  or confidential balance, or is frozen.
 
 ### Changed
 
@@ -60,6 +66,14 @@ a pinned recipient key and closing an account, in both the TypeScript package an
 - Rust `spends_what_is_pending_checks_its_apply_and_pins_the_recipient_key`: the transfer's
   transaction holds the apply and then the transfer; the checked apply calls the ZK program and the
   plain one does not; the copies agree after each step; the pinned key.
+- TypeScript `test/programAccounts.test.ts`: an owner that signs only through its "program"
+  configures, applies with a check, transfers and withdraws; a source of another owner is refused.
+- Rust `closes_an_emptied_account_and_refuses_one_that_still_holds_tokens`: refused with a
+  pending and then a public balance, closed once empty, the rent back to the owner.
+
+### Licence
+
+- 1.0.0-rc.3 becomes Apache-2.0 on its Change Date, 2030-11-11 (`LICENSE`, `rust/LICENSE`).
 
 ## [1.0.0-rc.2] - 2026-11-05
 

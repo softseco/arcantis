@@ -43,6 +43,14 @@ export { withdraw } from "./withdraw";
 export type { WithdrawInput, WithdrawResult } from "./withdraw";
 export { closeAccount } from "./closeAccount";
 export type { CloseAccountInput, CloseAccountResult } from "./closeAccount";
+export { prepareApply, prepareConfigure, prepareTransfer, prepareWithdraw } from "./programAccounts";
+export type {
+  PrepareApplyInput,
+  PrepareConfigureInput,
+  PrepareTransferInput,
+  PrepareWithdrawInput,
+  PreparedApply,
+} from "./programAccounts";
 export {
   decryptTransferAmountAsAuditor,
   deriveAuditorElgamalKeypair,

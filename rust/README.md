@@ -67,6 +67,9 @@ What the client takes care of:
 - **A known recipient key.** `transfer_to_known_key` takes the recipient's ElGamal key from your own
   records and refuses the transfer, before encrypting anything, if the RPC reports another one
   (`ErrorCode::RecipientKeyMismatch`).
+- **Closing an account.** `close_account` closes an emptied account in one transaction (an apply if
+  anything is pending, a zero-ciphertext proof, `EmptyAccount`, `CloseAccount`) and returns its rent
+  deposit; it refuses an account that is frozen or still holds a public or confidential balance.
 - **One transaction.** A transfer needs three zero-knowledge proofs, a withdraw two. Since
   September 2026 Solana takes v1 transactions of up to 4,096 bytes, and the client sends the
   proofs inside the transfer's or withdraw's own transaction: about 2,700 bytes for a transfer

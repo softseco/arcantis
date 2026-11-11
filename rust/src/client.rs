@@ -20,7 +20,9 @@ use solana_sdk::{
 use solana_zk_elgamal_proof_interface::instruction::ProofInstruction;
 use solana_zk_sdk::{
     encryption::elgamal::{ElGamalCiphertext, ElGamalPubkey},
-    zk_elgamal_proof_program::build_pubkey_validity_proof_data,
+    zk_elgamal_proof_program::{
+        build_pubkey_validity_proof_data, build_zero_ciphertext_proof_data,
+    },
 };
 use solana_zk_sdk_pod::encryption::{
     auth_encryption::PodAeCiphertext, elgamal::PodElGamalCiphertext,
@@ -38,7 +40,7 @@ use spl_token_2022_interface::{
         },
         ExtensionType,
     },
-    instruction::reallocate,
+    instruction::{close_account as close_token_account, reallocate},
     state::AccountState,
 };
 use spl_token_client::zk_proofs::confidential_transfer::{
@@ -990,6 +992,104 @@ impl ConfidentialClient {
             left_open,
             lamports,
         })
+    }
+
+    /// Close the owner's empty confidential token account and send its rent deposit to
+    /// `destination` (the owner when `None`).
+    ///
+    /// The account must be empty: no public balance and nothing available or pending in its
+    /// confidential balance; move everything out first with [`Self::transfer`] or
+    /// [`Self::withdraw`] and an ordinary token transfer. A frozen account cannot be closed. One
+    /// transaction: the apply when something is pending (it must add up to zero), `EmptyAccount`
+    /// with a zero-ciphertext proof of the available balance after it, and `CloseAccount`.
+    pub async fn close_account(
+        &self,
+        owner: &(dyn Signer + Sync),
+        mint: &Pubkey,
+        destination: Option<&Pubkey>,
+    ) -> Result<Signature> {
+        let operation = "close_account";
+        let owner_key = owner.pubkey();
+        let token = self.token_account(&owner_key, mint);
+        let keys = ConfidentialKeys::derive(owner).map_err(|e| e.within(operation))?;
+        let refuse = |what: String| Error::new(ErrorCode::InvalidInput, operation, what);
+        let mut attempt = 1;
+        loop {
+            let (account, ct) =
+                read_configured_account(&self.rpc, &token, mint, operation, "your").await?;
+            if account.state.base.state == AccountState::Frozen {
+                return Err(refuse(format!(
+                    "your token account {token} is frozen; Token-2022 does not close it until the \
+                     mint's freeze authority thaws it"
+                )));
+            }
+            if account.state.base.amount > 0 {
+                return Err(refuse(format!(
+                    "your token account {token} still has a public balance; transfer it out \
+                     before closing the account"
+                )));
+            }
+            assert_keys_match(&keys, &ct, &token, operation)?;
+            // What the available balance holds once anything pending is applied: it must be zero.
+            let applied = applied_balance(&ct, &keys, &token, operation)?;
+            if applied.value != 0 {
+                return Err(refuse(format!(
+                    "your token account {token} still has a confidential balance (available or \
+                     pending); transfer or withdraw it before closing the account"
+                )));
+            }
+            let pending = u64::from(ct.pending_balance_credit_counter) > 0;
+            let balance = ElGamalCiphertext::try_from(if pending {
+                applied.available_balance
+            } else {
+                ct.available_balance
+            })
+            .map_err(|_| {
+                Error::new(
+                    ErrorCode::DecryptionFailed,
+                    operation,
+                    format!("cannot parse the available balance of {token}"),
+                )
+            })?;
+            let proof = build_zero_ciphertext_proof_data(&keys.elgamal, &balance)
+                .map_err(|e| proof_error(operation, e))?;
+            let mut instructions = apply_instructions(
+                pending.then_some(&applied.update),
+                &token,
+                &owner_key,
+                operation,
+            )?;
+            instructions.extend(
+                ct_instruction::empty_account(
+                    &TOKEN_2022_PROGRAM_ID,
+                    &token,
+                    &owner_key,
+                    &[],
+                    ProofLocation::InstructionOffset(1.try_into().expect("non-zero"), &proof),
+                )
+                .map_err(|e| build_error(operation, e))?,
+            );
+            instructions.push(
+                close_token_account(
+                    &TOKEN_2022_PROGRAM_ID,
+                    &token,
+                    destination.unwrap_or(&owner_key),
+                    &owner_key,
+                    &[],
+                )
+                .map_err(|e| build_error(operation, e))?,
+            );
+            match self
+                .sender(operation)
+                .send(&instructions, &[owner], operation)
+                .await
+            {
+                Err(e) if pending && attempt < PENDING_CHANGED_ATTEMPTS && balance_changed(&e) => {
+                    attempt += 1;
+                }
+                result => return result,
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------------------
