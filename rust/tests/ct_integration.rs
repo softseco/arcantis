@@ -342,6 +342,101 @@ async fn refuses_recipients_that_cannot_take_a_confidential_transfer() {
     );
 }
 
+#[tokio::test]
+async fn spends_what_is_pending_checks_its_apply_and_pins_the_recipient_key() {
+    let Some(rpc) = on_chain() else { return };
+    let payer: Arc<dyn Signer + Send + Sync> = Arc::new(funded(&rpc).await);
+    let client = ConfidentialClient::new(rpc.clone(), payer.clone());
+    let mint = create_mint(&rpc, payer.clone(), None, None).await;
+    let (alice, bob) = (funded(&rpc).await, funded(&rpc).await);
+    let alice_account = client
+        .configure_account(&alice, &mint.mint)
+        .await
+        .unwrap()
+        .token_account;
+    let bob_account = client
+        .configure_account(&bob, &mint.mint)
+        .await
+        .unwrap()
+        .token_account;
+    mint.mint_to(&alice_account, 2_000).await;
+    let alice_keys = ConfidentialKeys::derive(&alice).unwrap();
+    let bob_keys = ConfidentialKeys::derive(&bob).unwrap();
+
+    // 500 deposited and left pending: nothing available, 500 spendable.
+    client.deposit(&alice, &mint.mint, 500).await.unwrap();
+    assert_eq!(client.decrypt_balance(&alice, &mint.mint).await.unwrap(), 0);
+    assert_eq!(
+        client
+            .decrypt_balance_with_pending(&alice, &mint.mint)
+            .await
+            .unwrap(),
+        500
+    );
+
+    // A transfer of 400 applies the 500 in its own transaction: apply, transfer, three proofs.
+    let sent = client
+        .transfer(&alice, &mint.mint, &bob.pubkey(), 400)
+        .await
+        .unwrap();
+    assert_eq!(sent.signatures.len(), 1);
+    let tx = sent_transaction(&rpc, &sent.transfer_signature).await;
+    let token_calls: Vec<u8> = tx
+        .instructions
+        .iter()
+        .filter(|(program, _)| *program == TOKEN_2022_PROGRAM_ID)
+        .map(|(_, data)| data[1])
+        .collect();
+    assert_eq!(token_calls, vec![8, 7], "apply (8), then transfer (7)");
+    assert_eq!(aes_copy(&rpc, &alice_account, &alice_keys).await, 100);
+
+    // Bob withdraws 150 of the 400 still pending to him.
+    client.withdraw(&bob, &mint.mint, 150).await.unwrap();
+    assert_eq!(public_balance(&rpc, &bob_account).await, 150);
+    assert_eq!(aes_copy(&rpc, &bob_account, &bob_keys).await, 250);
+
+    // A checked apply: the apply and a withdraw of zero with its proofs, in one transaction.
+    client.deposit(&alice, &mint.mint, 300).await.unwrap();
+    let signature = client
+        .apply_pending_balance(&alice, &mint.mint)
+        .await
+        .unwrap();
+    let tx = sent_transaction(&rpc, &signature).await;
+    assert!(tx.programs_called().contains(&ZK_PROOF_PROGRAM));
+    assert_eq!(aes_copy(&rpc, &alice_account, &alice_keys).await, 400);
+    assert_eq!(public_balance(&rpc, &alice_account).await, 1_200);
+
+    // The plain apply is still there when asked for.
+    client.deposit(&alice, &mint.mint, 100).await.unwrap();
+    let plain = ConfidentialClient::new(rpc.clone(), payer.clone()).with_checked_apply(false);
+    let signature = plain
+        .apply_pending_balance(&alice, &mint.mint)
+        .await
+        .unwrap();
+    assert!(!sent_transaction(&rpc, &signature)
+        .await
+        .programs_called()
+        .contains(&ZK_PROOF_PROGRAM));
+    assert_eq!(aes_copy(&rpc, &alice_account, &alice_keys).await, 500);
+
+    // A pinned recipient key: a wrong one is refused before anything is signed.
+    let wrong = PodElGamalPubkey::from(*alice_keys.elgamal.pubkey()).0;
+    assert_eq!(
+        code(
+            client
+                .transfer_to_known_key(&alice, &mint.mint, &bob.pubkey(), 10, &wrong)
+                .await
+        ),
+        ErrorCode::RecipientKeyMismatch
+    );
+    let right = PodElGamalPubkey::from(*bob_keys.elgamal.pubkey()).0;
+    client
+        .transfer_to_known_key(&alice, &mint.mint, &bob.pubkey(), 10, &right)
+        .await
+        .unwrap();
+    assert_eq!(aes_copy(&rpc, &alice_account, &alice_keys).await, 490);
+}
+
 /// The owner's AES copy of the available balance, as stored.
 async fn aes_copy(
     rpc: &solana_client::nonblocking::rpc_client::RpcClient,

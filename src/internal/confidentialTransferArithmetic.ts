@@ -99,6 +99,23 @@ export function subtractWithLoHiCiphertexts(
 }
 
 /**
+ * Adds lo/hi ciphertext halves (hi << bitLength + lo) to `left`: what Token-2022's
+ * ApplyPendingBalance does to the available balance (`add_with_lo_hi`). Point addition is exact, so
+ * the result is the very ciphertext the program will hold after the apply, as long as the pending
+ * balance has not changed in between.
+ */
+export function addWithLoHiCiphertexts(
+  left: ReadonlyUint8Array,
+  ciphertextLo: ReadonlyUint8Array,
+  ciphertextHi: ReadonlyUint8Array,
+  bitLength: bigint,
+) {
+  const leftPoints = ciphertextToPoints(left);
+  const right = ciphertextToPoints(combineLoHiCiphertexts(ciphertextLo, ciphertextHi, bitLength));
+  return pointsToCiphertext(leftPoints.commitment.add(right.commitment), leftPoints.handle.add(right.handle));
+}
+
+/**
  * Subtracts a plaintext amount from an ElGamal ciphertext. The commitment moves by
  * amount·G and the decryption handle stays the same. Used to compute the
  * remaining available-balance ciphertext after a confidential withdraw.

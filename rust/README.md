@@ -41,8 +41,7 @@ let client = ConfidentialClient::new(rpc, Arc::new(payer)).with_compute_unit_pri
 
 client.configure_account(&alice, &mint).await?;            // creates the account if needed
 client.deposit(&alice, &mint, 1_000).await?;               // public -> confidential (pending)
-client.apply_pending_balance(&alice, &mint).await?;        // pending -> available
-client.transfer(&alice, &mint, &bob.pubkey(), 400).await?; // amount encrypted end to end
+client.transfer(&alice, &mint, &bob.pubkey(), 400).await?; // applies the pending 1,000 first
 client.withdraw(&alice, &mint, 100).await?;                // confidential -> public
 let balance = client.decrypt_balance(&alice, &mint).await?; // 500
 ```
@@ -58,6 +57,16 @@ another version is a different type and does not fit.
 
 What the client takes care of:
 
+- **What is pending.** Incoming amounts land in the pending balance. A one-transaction transfer or
+  withdraw applies them first, in the same transaction, and builds its proofs from the balance
+  after the apply; if another payment lands meanwhile, Token-2022 refuses the whole transaction and
+  the client builds it again (`with_apply_pending(false)` spends the available balance only).
+  `apply_pending_balance` on its own is checked the same way, by a withdraw of zero in its
+  transaction (`with_checked_apply`), so the account's two copies of its balance cannot drift
+  apart. `decrypt_balance_with_pending` reads what can be spent.
+- **A known recipient key.** `transfer_to_known_key` takes the recipient's ElGamal key from your own
+  records and refuses the transfer, before encrypting anything, if the RPC reports another one
+  (`ErrorCode::RecipientKeyMismatch`).
 - **One transaction.** A transfer needs three zero-knowledge proofs, a withdraw two. Since
   September 2026 Solana takes v1 transactions of up to 4,096 bytes, and the client sends the
   proofs inside the transfer's or withdraw's own transaction: about 2,700 bytes for a transfer

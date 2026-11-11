@@ -6,6 +6,13 @@
 // and the new available balance is re-encrypted (AES) into the account's
 // decryptable balance. Keys are derived from the owner's wallet signer, or passed
 // in as `keys`.
+//
+// By default the apply is checked: a withdraw of zero follows it in the same transaction, with a
+// proof about the exact balance the apply should leave. A deposit or transfer that lands between
+// reading the account and the transaction makes Token-2022 refuse both, so the account's two copies
+// of its balance can no longer drift apart; the call reads the account again and retries
+// (internal/pendingBalance.ts). transfer() and withdraw() apply what is pending by themselves, so
+// most applications never need to call this.
 import {
   type Address,
   type ReadonlyUint8Array,
@@ -16,21 +23,14 @@ import {
   type SolanaRpcSubscriptionsApi,
   type TransactionSigner,
 } from "@solana/kit";
-import {
-  TOKEN_2022_PROGRAM_ADDRESS,
-  findAssociatedTokenPda,
-  getApplyConfidentialPendingBalanceInstruction,
-} from "@solana-program/token-2022";
+import { AccountState, TOKEN_2022_PROGRAM_ADDRESS, findAssociatedTokenPda } from "@solana-program/token-2022";
 
-import { ConfidentialTransfersError } from "./errors";
-import { readConfiguredAccount } from "./internal/accounts";
-import { readAvailableBalance } from "./internal/availableBalance";
+import { mintExtension, readConfiguredAccount, readMint } from "./internal/accounts";
+import { getConfidentialWithdrawInlineInstructions } from "./internal/confidentialTransferProof";
 import { assertKeysMatchAccount, ownerKeys } from "./internal/ownerKeys";
-import { sendInstructions, withRetries, type SendOptions } from "./internal/send";
-import { ElGamalCiphertext } from "./internal/zk";
+import { applyPendingLocally, getApplyInstruction, retryWhilePendingChanges } from "./internal/pendingBalance";
+import { sendInstructions, sendSingleTransaction, withRetries, type SendOptions } from "./internal/send";
 import type { ConfidentialKeypairs } from "./keys";
-
-const PENDING_BALANCE_LO_BIT_LENGTH = 16n;
 
 export type ApplyPendingBalanceInput = SendOptions & {
   /** RPC client, e.g. `createSolanaRpc(url)`. */
@@ -48,6 +48,14 @@ export type ApplyPendingBalanceInput = SendOptions & {
   keys?: ConfidentialKeypairs;
   /** Token program. Default: Token-2022. */
   programAddress?: Address;
+  /**
+   * Check the apply with a withdraw of zero in the same transaction (default `true`), so that a
+   * credit landing meanwhile cannot leave the account's balance copies apart (see the top of this
+   * file). It needs a v1 transaction and costs about 130,000 compute units more. `false` sends the
+   * apply alone, as before 1.0.0-rc.3. A frozen account or a paused mint, which can receive nothing,
+   * gets the apply alone either way.
+   */
+  verify?: boolean;
 };
 
 export type ApplyPendingBalanceResult = { token: Address; signature: Signature };
@@ -65,59 +73,42 @@ export async function applyPendingBalance(input: ApplyPendingBalanceInput): Prom
     (await findAssociatedTokenPda({ owner: input.owner.address, tokenProgram: programAddress, mint: input.mint }))[0];
 
   let keys = input.keys;
-  const signature = await withRetries(input.retries, async () => {
+  const signature = await withRetries(input.retries, () => retryWhilePendingChanges(async () => {
     // Read the account on every attempt: the pending balance and its credit counter change with
     // each incoming transfer, and the instruction has to match them.
-    const { data, ct } = await readConfiguredAccount(input.rpc, token, operation, "your");
+    const [{ data, ct }, mint] = await Promise.all([
+      readConfiguredAccount(input.rpc, token, operation, "your"),
+      readMint(input.rpc, input.mint, operation),
+    ]);
     keys ??= await ownerKeys(input.owner, undefined, operation);
     assertKeysMatchAccount(keys, data, token, operation);
-    const { elgamalKeypair, aesKey } = keys;
-    const elgamalSecretKey = elgamalKeypair.secret();
-
-    const decrypt = (what: string, run: () => bigint) => {
-      try {
-        return run();
-      } catch (e) {
-        throw new ConfidentialTransfersError(
-          "DECRYPTION_FAILED",
-          `${operation}: could not decrypt the ${what} of ${token}. ` +
-            (what === "pending balance (high part)"
-              ? "Incoming amounts add up to more than can be decrypted at once (about 2^48 base units); " +
-                "the pending balance cannot be applied with this SDK. "
-              : "") +
-            String(e),
-          { operation, cause: e },
-        );
-      }
-    };
-    const parseElGamal = (bytes: ReadonlyUint8Array) => {
-      const c = ElGamalCiphertext.fromBytes(new Uint8Array(bytes as Uint8Array));
-      if (!c) throw new ConfidentialTransfersError("DECRYPTION_FAILED", `${operation}: failed to parse an ElGamal ciphertext`, { operation });
-      return c;
-    };
-
-    const pendingLo = decrypt("pending balance (low part)", () => elgamalSecretKey.decrypt(parseElGamal(ct.pendingBalanceLow)));
-    const pendingHi = decrypt("pending balance (high part)", () => elgamalSecretKey.decrypt(parseElGamal(ct.pendingBalanceHigh)));
     // The AES copy, or the corrected value if an earlier apply left the copy behind; the copy written
-    // below then repairs it (internal/availableBalance.ts).
-    const currentAvailable = readAvailableBalance(ct, keys, token, operation);
-    const newAvailable = currentAvailable + ((pendingHi << PENDING_BALANCE_LO_BIT_LENGTH) + pendingLo);
+    // here then repairs it (internal/availableBalance.ts).
+    const applied = applyPendingLocally(ct, keys, token, operation);
+    const ctx = { rpc: input.rpc, rpcSubscriptions: input.rpcSubscriptions, payer: input.payer, operation, computeUnitPrice: input.computeUnitPrice };
 
-    return sendInstructions(
-      { rpc: input.rpc, rpcSubscriptions: input.rpcSubscriptions, payer: input.payer, operation, computeUnitPrice: input.computeUnitPrice },
-      [
-        getApplyConfidentialPendingBalanceInstruction(
-          {
-            token,
-            authority: input.owner,
-            expectedPendingBalanceCreditCounter: ct.pendingBalanceCreditCounter,
-            newDecryptableAvailableBalance: aesKey.encrypt(newAvailable).toBytes(),
-          },
-          { programAddress },
-        ),
-      ],
-    );
-  });
+    const canReceive = data.state !== AccountState.Frozen && !mintExtension(mint.data, "PausableConfig")?.paused;
+    if (input.verify !== false && canReceive) {
+      const instructions = await getConfidentialWithdrawInlineInstructions({
+        payer: input.payer,
+        rpc: input.rpc,
+        token,
+        mint: input.mint,
+        tokenAccount: data,
+        authority: input.owner,
+        amount: 0n,
+        allowZero: true,
+        decimals: mint.data.decimals,
+        elgamalKeypair: keys.elgamalKeypair,
+        aesKey: keys.aesKey,
+        programAddress,
+        applied,
+      });
+      const sent = await sendSingleTransaction(ctx, instructions);
+      if (sent) return sent.signatures[0]!;
+    }
+    return sendInstructions(ctx, [getApplyInstruction(token, input.owner, applied, programAddress)]);
+  }));
 
   return { token, signature };
 }

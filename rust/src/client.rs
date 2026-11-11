@@ -39,6 +39,7 @@ use spl_token_2022_interface::{
         ExtensionType,
     },
     instruction::reallocate,
+    state::AccountState,
 };
 use spl_token_client::zk_proofs::confidential_transfer::{
     TransferAccountInfo, WithdrawAccountInfo,
@@ -92,6 +93,8 @@ pub struct ConfidentialClient {
     compute_unit_price: Option<u64>,
     max_retries: u32,
     single_transaction: bool,
+    apply_pending: bool,
+    checked_apply: bool,
 }
 
 /// The result of [`ConfidentialClient::configure_account`].
@@ -275,12 +278,14 @@ pub struct PendingBalanceUpdate {
 struct TransferProofs {
     data: TransferProofData,
     new_decryptable_available_balance: [u8; 36],
+    /// Apply the pending balance first, in the same transaction (one-transaction transfers only).
+    apply: Option<PendingBalanceUpdate>,
 }
 
 impl TransferProofs {
     /// The transfer with its three proofs inside the same transaction: the Token-2022 transfer
-    /// first, then the proof verifications it reads at offsets 1, 2 and 3. Add the transfer
-    /// hook's accounts to the first instruction.
+    /// first (after the apply, if any), then the proof verifications it reads at offsets 1, 2 and
+    /// 3. Add the transfer hook's accounts to the instruction at [`Self::action_index`].
     fn inline_instructions(
         &self,
         mint: &Pubkey,
@@ -289,21 +294,31 @@ impl TransferProofs {
         authority: &Pubkey,
     ) -> Result<Vec<Instruction>> {
         let validity = &self.data.ciphertext_validity_proof_data_with_ciphertext;
-        ct_instruction::transfer(
-            &TOKEN_2022_PROGRAM_ID,
-            source,
-            mint,
-            destination,
-            &PodAeCiphertext(self.new_decryptable_available_balance),
-            &validity.ciphertext_lo,
-            &validity.ciphertext_hi,
-            authority,
-            &[],
-            ProofLocation::InstructionOffset(offset(1), &self.data.equality_proof_data),
-            ProofLocation::InstructionOffset(offset(2), &validity.proof_data),
-            ProofLocation::InstructionOffset(offset(3), &self.data.range_proof_data),
-        )
-        .map_err(|e| build_error("transfer", e))
+        let mut instructions =
+            apply_instructions(self.apply.as_ref(), source, authority, "transfer")?;
+        instructions.extend(
+            ct_instruction::transfer(
+                &TOKEN_2022_PROGRAM_ID,
+                source,
+                mint,
+                destination,
+                &PodAeCiphertext(self.new_decryptable_available_balance),
+                &validity.ciphertext_lo,
+                &validity.ciphertext_hi,
+                authority,
+                &[],
+                ProofLocation::InstructionOffset(offset(1), &self.data.equality_proof_data),
+                ProofLocation::InstructionOffset(offset(2), &validity.proof_data),
+                ProofLocation::InstructionOffset(offset(3), &self.data.range_proof_data),
+            )
+            .map_err(|e| build_error("transfer", e))?,
+        );
+        Ok(instructions)
+    }
+
+    /// Where the transfer instruction is among [`Self::inline_instructions`].
+    fn action_index(&self) -> usize {
+        usize::from(self.apply.is_some())
     }
 }
 
@@ -313,30 +328,59 @@ struct WithdrawProofs {
     amount: u64,
     decimals: u8,
     new_decryptable_available_balance: [u8; 36],
+    /// As for a transfer: apply the pending balance first, in the same transaction.
+    apply: Option<PendingBalanceUpdate>,
 }
 
 impl WithdrawProofs {
-    /// The withdraw with its two proofs inside the same transaction, at offsets 1 and 2.
+    /// The withdraw with its two proofs inside the same transaction, at offsets 1 and 2 (after
+    /// the apply, if any).
     fn inline_instructions(
         &self,
         mint: &Pubkey,
         token: &Pubkey,
         authority: &Pubkey,
     ) -> Result<Vec<Instruction>> {
-        ct_instruction::withdraw(
-            &TOKEN_2022_PROGRAM_ID,
-            token,
-            mint,
-            self.amount,
-            self.decimals,
-            &PodAeCiphertext(self.new_decryptable_available_balance),
-            authority,
-            &[],
-            ProofLocation::InstructionOffset(offset(1), &self.data.equality_proof_data),
-            ProofLocation::InstructionOffset(offset(2), &self.data.range_proof_data),
-        )
-        .map_err(|e| build_error("withdraw", e))
+        let mut instructions =
+            apply_instructions(self.apply.as_ref(), token, authority, "withdraw")?;
+        instructions.extend(
+            ct_instruction::withdraw(
+                &TOKEN_2022_PROGRAM_ID,
+                token,
+                mint,
+                self.amount,
+                self.decimals,
+                &PodAeCiphertext(self.new_decryptable_available_balance),
+                authority,
+                &[],
+                ProofLocation::InstructionOffset(offset(1), &self.data.equality_proof_data),
+                ProofLocation::InstructionOffset(offset(2), &self.data.range_proof_data),
+            )
+            .map_err(|e| build_error("withdraw", e))?,
+        );
+        Ok(instructions)
     }
+}
+
+/// The ApplyPendingBalance that goes first in a transaction, or nothing.
+fn apply_instructions(
+    apply: Option<&PendingBalanceUpdate>,
+    token: &Pubkey,
+    authority: &Pubkey,
+    operation: &'static str,
+) -> Result<Vec<Instruction>> {
+    let Some(update) = apply else {
+        return Ok(Vec::new());
+    };
+    Ok(vec![ct_instruction::apply_pending_balance(
+        &TOKEN_2022_PROGRAM_ID,
+        token,
+        update.expected_pending_balance_credit_counter,
+        &PodAeCiphertext(update.new_decryptable_available_balance),
+        authority,
+        &[],
+    )
+    .map_err(|e| build_error(operation, e))?])
 }
 
 fn offset(n: i8) -> std::num::NonZeroI8 {
@@ -353,6 +397,8 @@ impl ConfidentialClient {
             compute_unit_price: None,
             max_retries: 0,
             single_transaction: true,
+            apply_pending: true,
+            checked_apply: true,
         }
     }
 
@@ -378,6 +424,28 @@ impl ConfidentialClient {
     /// accounts).
     pub fn with_single_transaction(mut self, single_transaction: bool) -> Self {
         self.single_transaction = single_transaction;
+        self
+    }
+
+    /// Whether a one-transaction [`Self::transfer`] or [`Self::withdraw`] also spends what is
+    /// pending (default `true`): it applies the pending balance first, in the same transaction,
+    /// and builds its proofs from the balance after it, so a recipient of earlier payments never
+    /// has to call [`Self::apply_pending_balance`]. If another credit lands while the transaction
+    /// is on its way, Token-2022 refuses the whole transaction and the call builds it again (up
+    /// to three times). With proof accounts only the available balance is spent.
+    pub fn with_apply_pending(mut self, apply_pending: bool) -> Self {
+        self.apply_pending = apply_pending;
+        self
+    }
+
+    /// Whether [`Self::apply_pending_balance`] checks its apply with a withdraw of zero in the same
+    /// v1 transaction (default `true`), so that a credit landing meanwhile cannot leave the
+    /// account's two copies of its balance apart: Token-2022 then refuses both and the call reads
+    /// the account again. It costs about 130,000 compute units more. Ignored without
+    /// [`Self::with_single_transaction`], and for a frozen account or a paused mint, which receive
+    /// nothing.
+    pub fn with_checked_apply(mut self, checked_apply: bool) -> Self {
+        self.checked_apply = checked_apply;
         self
     }
 
@@ -524,6 +592,13 @@ impl ConfidentialClient {
 
     /// Move the owner's pending balance (incoming deposits and transfers) into the available
     /// balance.
+    ///
+    /// By default the apply is checked ([`Self::with_checked_apply`]): a withdraw of zero follows
+    /// it in the same v1 transaction, with a proof about the exact balance the apply should leave,
+    /// so a deposit or transfer landing meanwhile makes Token-2022 refuse both instead of leaving
+    /// the account's two copies of its balance apart; the call then reads the account again (up to
+    /// three times). [`Self::transfer`] and [`Self::withdraw`] apply what is pending by themselves,
+    /// so most applications never need this.
     pub async fn apply_pending_balance(
         &self,
         owner: &(dyn Signer + Sync),
@@ -533,21 +608,78 @@ impl ConfidentialClient {
         let owner_key = owner.pubkey();
         let token = self.token_account(&owner_key, mint);
         let keys = ConfidentialKeys::derive(owner).map_err(|e| e.within(operation))?;
-        let update = self
-            .pending_balance_update_inner(operation, mint, &token, &keys)
-            .await?;
-        let instruction = ct_instruction::apply_pending_balance(
-            &TOKEN_2022_PROGRAM_ID,
-            &token,
-            update.expected_pending_balance_credit_counter,
-            &PodAeCiphertext(update.new_decryptable_available_balance),
-            &owner_key,
-            &[],
-        )
-        .map_err(|e| build_error(operation, e))?;
-        self.sender(operation)
-            .send(&[instruction], &[owner], operation)
-            .await
+        let checked = self.single_transaction && self.checked_apply;
+        let mint_info = if checked {
+            Some(read_mint(&self.rpc, &TOKEN_2022_PROGRAM_ID, mint, operation).await?)
+        } else {
+            None
+        };
+        let mut attempt = 1;
+        loop {
+            let (account, ct) =
+                read_configured_account(&self.rpc, &token, mint, operation, "your").await?;
+            assert_keys_match(&keys, &ct, &token, operation)?;
+            let applied = applied_balance(&ct, &keys, &token, operation)?;
+            let frozen = account.state.base.state == AccountState::Frozen;
+            if let Some(mint_info) = mint_info.as_ref().filter(|m| !m.paused && !frozen) {
+                let info = WithdrawAccountInfo {
+                    available_balance: applied.available_balance,
+                    decryptable_available_balance: PodAeCiphertext::from(
+                        keys.ae.encrypt(applied.value),
+                    ),
+                };
+                let data = info
+                    .generate_proof_data(0, &keys.elgamal, &keys.ae)
+                    .map_err(|e| proof_error(operation, e))?;
+                let new_balance = info
+                    .new_decryptable_available_balance(0, &keys.ae)
+                    .map_err(|e| proof_error(operation, e))?;
+                let proofs = WithdrawProofs {
+                    data,
+                    amount: 0,
+                    decimals: mint_info.decimals,
+                    new_decryptable_available_balance: PodAeCiphertext::from(new_balance).0,
+                    apply: Some(applied.update),
+                };
+                let instructions = proofs
+                    .inline_instructions(mint, &token, &owner_key)
+                    .map_err(|e| e.within(operation))?;
+                match self
+                    .sender(operation)
+                    .send_single(&instructions, &[owner], operation)
+                    .await
+                {
+                    Ok(Some(signature)) => return Ok(signature),
+                    Ok(None) => {}
+                    Err(e) if attempt < PENDING_CHANGED_ATTEMPTS && balance_changed(&e) => {
+                        attempt += 1;
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            let instructions =
+                apply_instructions(Some(&applied.update), &token, &owner_key, operation)?;
+            return self
+                .sender(operation)
+                .send(&instructions, &[owner], operation)
+                .await;
+        }
+    }
+
+    /// The owner's available confidential balance plus what is pending: what [`Self::transfer`]
+    /// and [`Self::withdraw`] can spend. Reads only; signs only the key derivation.
+    pub async fn decrypt_balance_with_pending(
+        &self,
+        owner: &(dyn Signer + Sync),
+        mint: &Pubkey,
+    ) -> Result<u64> {
+        let operation = "decrypt_balance";
+        let keys = ConfidentialKeys::derive(owner).map_err(|e| e.within(operation))?;
+        let token = self.token_account(&owner.pubkey(), mint);
+        let (_, ct) = read_configured_account(&self.rpc, &token, mint, operation, "your").await?;
+        assert_keys_match(&keys, &ct, &token, operation)?;
+        balance_after_apply(&ct, &keys, &token, operation)
     }
 
     /// The owner's available confidential balance. Reads only; signs only the key derivation.
@@ -594,6 +726,41 @@ impl ConfidentialClient {
         destination_owner: &Pubkey,
         amount: u64,
     ) -> Result<TransferResult> {
+        self.transfer_inner(owner, mint, destination_owner, amount, None)
+            .await
+    }
+
+    /// [`Self::transfer`] to a recipient whose ElGamal key the application already knows (from
+    /// its own records of the recipient, not from this RPC). If the RPC reports another key for
+    /// the recipient's account, the transfer is refused ([`ErrorCode::RecipientKeyMismatch`])
+    /// before anything is encrypted or signed: an RPC that substituted its own key would
+    /// otherwise receive the amount encrypted to that key.
+    pub async fn transfer_to_known_key(
+        &self,
+        owner: &(dyn Signer + Sync),
+        mint: &Pubkey,
+        destination_owner: &Pubkey,
+        amount: u64,
+        destination_elgamal_pubkey: &[u8; 32],
+    ) -> Result<TransferResult> {
+        self.transfer_inner(
+            owner,
+            mint,
+            destination_owner,
+            amount,
+            Some(destination_elgamal_pubkey),
+        )
+        .await
+    }
+
+    async fn transfer_inner(
+        &self,
+        owner: &(dyn Signer + Sync),
+        mint: &Pubkey,
+        destination_owner: &Pubkey,
+        amount: u64,
+        pinned_destination_key: Option<&[u8; 32]>,
+    ) -> Result<TransferResult> {
         let operation = "transfer";
         check_amount(amount, operation, true)?;
         let mint_info = read_mint(&self.rpc, &TOKEN_2022_PROGRAM_ID, mint, operation).await?;
@@ -602,7 +769,55 @@ impl ConfidentialClient {
         let destination = self.token_account(destination_owner, mint);
         let keys = ConfidentialKeys::derive(owner).map_err(|e| e.within(operation))?;
 
-        // The transfer hook's accounts are resolved and checked before the proofs are made.
+        if self.single_transaction {
+            for attempt in 1..=PENDING_CHANGED_ATTEMPTS {
+                // The transfer hook's accounts are resolved and checked before the proofs are made.
+                let (proofs, hook_accounts) = self
+                    .transfer_proofs(
+                        operation,
+                        mint,
+                        &mint_info,
+                        &source,
+                        &keys,
+                        &destination,
+                        amount,
+                        Some(&owner_key),
+                        TransferProofOptions {
+                            apply_pending: self.apply_pending,
+                            pinned_destination_key,
+                        },
+                    )
+                    .await?;
+                let mut instructions = proofs
+                    .inline_instructions(mint, &source, &destination, &owner_key)
+                    .map_err(|e| e.within(operation))?;
+                instructions[proofs.action_index()]
+                    .accounts
+                    .extend(hook_accounts.iter().cloned());
+                match self
+                    .sender(operation)
+                    .send_single(&instructions, &[owner], operation)
+                    .await
+                {
+                    Ok(Some(signature)) => {
+                        return Ok(TransferResult {
+                            source_token_account: source,
+                            destination_token_account: destination,
+                            signatures: vec![signature],
+                            transfer_signature: signature,
+                            proof_accounts_left_open: Vec::new(),
+                        })
+                    }
+                    // Too large for one transaction: proof accounts below.
+                    Ok(None) => break,
+                    // A credit landed during the apply: nothing changed, build it again.
+                    Err(e) if attempt < PENDING_CHANGED_ATTEMPTS && balance_changed(&e) => continue,
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        // With proof accounts the proofs are verified in earlier transactions, so the transfer
+        // spends the available balance only.
         let (proofs, hook_accounts) = self
             .transfer_proofs(
                 operation,
@@ -613,29 +828,12 @@ impl ConfidentialClient {
                 &destination,
                 amount,
                 Some(&owner_key),
+                TransferProofOptions {
+                    apply_pending: false,
+                    pinned_destination_key,
+                },
             )
             .await?;
-        if self.single_transaction {
-            let mut instructions = proofs
-                .inline_instructions(mint, &source, &destination, &owner_key)
-                .map_err(|e| e.within(operation))?;
-            instructions[0]
-                .accounts
-                .extend(hook_accounts.iter().cloned());
-            if let Some(signature) = self
-                .sender(operation)
-                .send_single(&instructions, &[owner], operation)
-                .await?
-            {
-                return Ok(TransferResult {
-                    source_token_account: source,
-                    destination_token_account: destination,
-                    signatures: vec![signature],
-                    transfer_signature: signature,
-                    proof_accounts_left_open: Vec::new(),
-                });
-            }
-        }
         let prepared = self
             .transfer_proof_accounts(operation, mint, &source, &destination, proofs)
             .await?;
@@ -677,26 +875,44 @@ impl ConfidentialClient {
         let token = self.token_account(&owner_key, mint);
         let keys = ConfidentialKeys::derive(owner).map_err(|e| e.within(operation))?;
 
-        let proofs = self
-            .withdraw_proofs(operation, &mint_info, mint, &token, &keys, amount)
-            .await?;
         if self.single_transaction {
-            let instructions = proofs
-                .inline_instructions(mint, &token, &owner_key)
-                .map_err(|e| e.within(operation))?;
-            if let Some(signature) = self
-                .sender(operation)
-                .send_single(&instructions, &[owner], operation)
-                .await?
-            {
-                return Ok(WithdrawResult {
-                    token_account: token,
-                    signatures: vec![signature],
-                    withdraw_signature: signature,
-                    proof_accounts_left_open: Vec::new(),
-                });
+            for attempt in 1..=PENDING_CHANGED_ATTEMPTS {
+                let proofs = self
+                    .withdraw_proofs(
+                        operation,
+                        &mint_info,
+                        mint,
+                        &token,
+                        &keys,
+                        amount,
+                        self.apply_pending,
+                    )
+                    .await?;
+                let instructions = proofs
+                    .inline_instructions(mint, &token, &owner_key)
+                    .map_err(|e| e.within(operation))?;
+                match self
+                    .sender(operation)
+                    .send_single(&instructions, &[owner], operation)
+                    .await
+                {
+                    Ok(Some(signature)) => {
+                        return Ok(WithdrawResult {
+                            token_account: token,
+                            signatures: vec![signature],
+                            withdraw_signature: signature,
+                            proof_accounts_left_open: Vec::new(),
+                        })
+                    }
+                    Ok(None) => break,
+                    Err(e) if attempt < PENDING_CHANGED_ATTEMPTS && balance_changed(&e) => continue,
+                    Err(e) => return Err(e),
+                }
             }
         }
+        let proofs = self
+            .withdraw_proofs(operation, &mint_info, mint, &token, &keys, amount, false)
+            .await?;
         let prepared = self
             .withdraw_proof_accounts(operation, mint, &token, proofs)
             .await?;
@@ -804,6 +1020,7 @@ impl ConfidentialClient {
                 destination_token_account,
                 amount,
                 None,
+                TransferProofOptions::default(),
             )
             .await?;
         self.transfer_proof_accounts(
@@ -828,7 +1045,15 @@ impl ConfidentialClient {
         check_amount(amount, operation, false)?;
         let mint_info = read_mint(&self.rpc, &TOKEN_2022_PROGRAM_ID, mint, operation).await?;
         let proofs = self
-            .withdraw_proofs(operation, &mint_info, mint, token_account, keys, amount)
+            .withdraw_proofs(
+                operation,
+                &mint_info,
+                mint,
+                token_account,
+                keys,
+                amount,
+                false,
+            )
             .await?;
         self.withdraw_proof_accounts(operation, mint, token_account, proofs)
             .await
@@ -969,6 +1194,7 @@ impl ConfidentialClient {
         destination: &Pubkey,
         amount: u64,
         hook_authority: Option<&Pubkey>,
+        options: TransferProofOptions<'_>,
     ) -> Result<(TransferProofs, Vec<AccountMeta>)> {
         // Everything Token-2022 would refuse is checked before the proofs are paid for.
         mint_info.assert_not_paused(mint, operation)?;
@@ -981,7 +1207,28 @@ impl ConfidentialClient {
             read_configured_account(&self.rpc, destination, mint, operation, "the recipient's")
                 .await?;
         assert_can_receive(&destination_ct, destination, operation, "the recipient's")?;
-        let available = available_balance(&source_ct, keys, source, operation)?;
+        if let Some(pinned) = options.pinned_destination_key {
+            if destination_ct.elgamal_pubkey.0 != *pinned {
+                return Err(Error::new(
+                    ErrorCode::RecipientKeyMismatch,
+                    operation,
+                    format!(
+                        "the RPC reports another ElGamal key for the recipient's account {destination} than the \
+                         pinned one. Nothing was encrypted or signed. Check the RPC, or the recipient's key if \
+                         the recipient set up a new account."
+                    ),
+                ));
+            }
+        }
+        let applied = if options.apply_pending {
+            pending_to_apply(&source_ct, keys, source, operation)?
+        } else {
+            None
+        };
+        let available = match &applied {
+            Some(applied) => applied.value,
+            None => available_balance(&source_ct, keys, source, operation)?,
+        };
         if amount > available {
             return Err(insufficient_funds(operation, source, available));
         }
@@ -1005,7 +1252,9 @@ impl ConfidentialClient {
         // The proofs and the new AES copy are computed from the checked balance, so a copy that
         // fell behind (see `available_balance`) is repaired by this transfer.
         let info = TransferAccountInfo {
-            available_balance: source_ct.available_balance,
+            available_balance: applied
+                .as_ref()
+                .map_or(source_ct.available_balance, |a| a.available_balance),
             decryptable_available_balance: PodAeCiphertext::from(keys.ae.encrypt(available)),
         };
         let data = info
@@ -1023,6 +1272,7 @@ impl ConfidentialClient {
         let proofs = TransferProofs {
             data,
             new_decryptable_available_balance: PodAeCiphertext::from(new_balance).0,
+            apply: applied.map(|a| a.update),
         };
         Ok((proofs, hook_accounts))
     }
@@ -1087,6 +1337,7 @@ impl ConfidentialClient {
     }
 
     /// Check a withdraw and generate its proofs, with nothing sent yet.
+    #[allow(clippy::too_many_arguments)]
     async fn withdraw_proofs(
         &self,
         operation: &'static str,
@@ -1095,19 +1346,30 @@ impl ConfidentialClient {
         token: &Pubkey,
         keys: &ConfidentialKeys,
         amount: u64,
+        apply_pending: bool,
     ) -> Result<WithdrawProofs> {
         mint_info.assert_not_paused(mint, operation)?;
         let decimals = mint_info.decimals;
         let (_, ct) = read_configured_account(&self.rpc, token, mint, operation, "your").await?;
         assert_keys_match(keys, &ct, token, operation)?;
         assert_can_send(&ct, token, operation, "your")?;
-        let available = available_balance(&ct, keys, token, operation)?;
+        let applied = if apply_pending {
+            pending_to_apply(&ct, keys, token, operation)?
+        } else {
+            None
+        };
+        let available = match &applied {
+            Some(applied) => applied.value,
+            None => available_balance(&ct, keys, token, operation)?,
+        };
         if amount > available {
             return Err(insufficient_funds(operation, token, available));
         }
         // As in a transfer: from the checked balance, which repairs a copy that fell behind.
         let info = WithdrawAccountInfo {
-            available_balance: ct.available_balance,
+            available_balance: applied
+                .as_ref()
+                .map_or(ct.available_balance, |a| a.available_balance),
             decryptable_available_balance: PodAeCiphertext::from(keys.ae.encrypt(available)),
         };
         let data = info
@@ -1121,6 +1383,7 @@ impl ConfidentialClient {
             amount,
             decimals,
             new_decryptable_available_balance: PodAeCiphertext::from(new_balance).0,
+            apply: applied.map(|a| a.update),
         })
     }
 
@@ -1260,9 +1523,20 @@ fn pending_update(
     token: &Pubkey,
     operation: &'static str,
 ) -> Result<PendingBalanceUpdate> {
-    // The checked available balance, so that an apply also repairs a copy an earlier apply left
-    // behind (see `available_balance`).
-    let available = available_balance(ct, keys, token, operation)?;
+    let total = balance_after_apply(ct, keys, token, operation)?;
+    Ok(PendingBalanceUpdate {
+        expected_pending_balance_credit_counter: u64::from(ct.pending_balance_credit_counter),
+        new_decryptable_available_balance: PodAeCiphertext::from(keys.ae.encrypt(total)).0,
+    })
+}
+
+/// The pending balance, decrypted (its low and high part).
+fn pending_amount(
+    ct: &ConfidentialTransferAccount,
+    keys: &ConfidentialKeys,
+    token: &Pubkey,
+    operation: &'static str,
+) -> Result<u64> {
     let fail = |part: &str| {
         Error::new(
             ErrorCode::DecryptionFailed,
@@ -1280,15 +1554,112 @@ fn pending_update(
     };
     let lo = decrypt(ct.pending_balance_lo).ok_or_else(|| fail("low part"))?;
     let hi = decrypt(ct.pending_balance_hi).ok_or_else(|| fail("high part"))?;
-    let new_balance = hi
-        .checked_shl(PENDING_BALANCE_LO_BIT_LENGTH)
+    hi.checked_shl(PENDING_BALANCE_LO_BIT_LENGTH)
         .and_then(|h| h.checked_add(lo))
-        .and_then(|pending| available.checked_add(pending))
-        .ok_or_else(|| fail("total"))?;
-    Ok(PendingBalanceUpdate {
-        expected_pending_balance_credit_counter: u64::from(ct.pending_balance_credit_counter),
-        new_decryptable_available_balance: PodAeCiphertext::from(keys.ae.encrypt(new_balance)).0,
+        .ok_or_else(|| fail("total"))
+}
+
+/// The available balance as it stands once what is pending now is applied: what a transfer or
+/// withdraw spends when it applies the pending balance in its own transaction.
+///
+/// ApplyPendingBalance adds everything pending when it runs, while the owner writes the AES copy
+/// from what it read beforehand; a credit landing in between leaves the copy behind (see
+/// `available_balance`). So the apply goes in the same transaction as an instruction whose proof
+/// is about the exact ElGamal balance after it, computed here with Token-2022's own arithmetic
+/// (`add_with_lo_hi`). If a credit lands meanwhile, Token-2022 refuses the whole transaction
+/// (`ConfidentialTransferBalanceMismatch`, 0x1b) and nothing changes. The TypeScript SDK does the
+/// same (`src/internal/pendingBalance.ts`).
+#[derive(Clone, Copy)]
+struct AppliedBalance {
+    value: u64,
+    available_balance: PodElGamalCiphertext,
+    update: PendingBalanceUpdate,
+}
+
+fn applied_balance(
+    ct: &ConfidentialTransferAccount,
+    keys: &ConfidentialKeys,
+    token: &Pubkey,
+    operation: &'static str,
+) -> Result<AppliedBalance> {
+    let value = balance_after_apply(ct, keys, token, operation)?;
+    let available_balance = spl_token_confidential_transfer_ciphertext_arithmetic::add_with_lo_hi(
+        &ct.available_balance,
+        &ct.pending_balance_lo,
+        &ct.pending_balance_hi,
+    )
+    .ok_or_else(|| {
+        Error::new(
+            ErrorCode::DecryptionFailed,
+            operation,
+            format!("the encrypted balances of {token} are malformed"),
+        )
+    })?;
+    Ok(AppliedBalance {
+        value,
+        available_balance,
+        update: PendingBalanceUpdate {
+            expected_pending_balance_credit_counter: u64::from(ct.pending_balance_credit_counter),
+            new_decryptable_available_balance: PodAeCiphertext::from(keys.ae.encrypt(value)).0,
+        },
     })
+}
+
+/// The pending balance to apply with a transfer or withdraw, or `None` when nothing is pending or
+/// the pending total cannot be decrypted here (the operation then spends the available balance).
+fn pending_to_apply(
+    ct: &ConfidentialTransferAccount,
+    keys: &ConfidentialKeys,
+    token: &Pubkey,
+    operation: &'static str,
+) -> Result<Option<AppliedBalance>> {
+    if u64::from(ct.pending_balance_credit_counter) == 0 {
+        return Ok(None);
+    }
+    match applied_balance(ct, keys, token, operation) {
+        Ok(applied) => Ok(Some(applied)),
+        Err(e) if e.code() == ErrorCode::DecryptionFailed => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// How often an operation that applies the pending balance builds its transaction again.
+const PENDING_CHANGED_ATTEMPTS: u32 = 3;
+
+/// True if Token-2022 refused a transaction because the balance its proof is about changed in the
+/// meantime (`ConfidentialTransferBalanceMismatch`, 0x1b). Such a transaction changed nothing.
+fn balance_changed(e: &Error) -> bool {
+    const MISMATCH: &str = "custom program error: 0x1b";
+    e.code() == ErrorCode::TransactionFailed
+        && (e.to_string().contains(MISMATCH) || e.logs().iter().any(|line| line.contains(MISMATCH)))
+}
+
+/// Available plus pending: the balance an apply leaves.
+fn balance_after_apply(
+    ct: &ConfidentialTransferAccount,
+    keys: &ConfidentialKeys,
+    token: &Pubkey,
+    operation: &'static str,
+) -> Result<u64> {
+    // The checked available balance, so that an apply also repairs a copy an earlier apply left
+    // behind (see `available_balance`).
+    let available = available_balance(ct, keys, token, operation)?;
+    available
+        .checked_add(pending_amount(ct, keys, token, operation)?)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::DecryptionFailed,
+                operation,
+                format!("the balance of {token} after the apply does not fit in 64 bits"),
+            )
+        })
+}
+
+/// Per-transfer choices for `transfer_proofs`.
+#[derive(Clone, Copy, Default)]
+struct TransferProofOptions<'a> {
+    apply_pending: bool,
+    pinned_destination_key: Option<&'a [u8; 32]>,
 }
 
 fn check_amount(amount: u64, operation: &'static str, capped: bool) -> Result<()> {

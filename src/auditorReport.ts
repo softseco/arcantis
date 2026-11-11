@@ -244,6 +244,8 @@ function toActivity(
     }
     case CONFIDENTIAL_WITHDRAW_CONFIDENTIAL_TRANSFER_DISCRIMINATOR: {
       const { amount } = getConfidentialWithdrawInstructionDataDecoder().decode(data);
+      // A withdraw of zero moves nothing: applyPendingBalance sends one to check its apply.
+      if (amount === 0n) return null;
       const a = at(0);
       return { kind: "withdraw", fromToken: a.token, fromOwner: a.owner, toToken: a.token, toOwner: a.owner, amount, decrypted: false };
     }

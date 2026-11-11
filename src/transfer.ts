@@ -33,6 +33,7 @@ import {
 } from "./internal/accounts";
 import { getConfidentialTransferInlineInstructions, getConfidentialTransferProofFlow } from "./internal/confidentialTransferProof";
 import { assertKeysMatchAccount, ownerKeys } from "./internal/ownerKeys";
+import { pendingToApply, retryWhilePendingChanges } from "./internal/pendingBalance";
 import { executeProofFlow, sendSingleTransaction, withRetries, type SendOptions } from "./internal/send";
 import { assertHookAccountsAreNotSigners, resolveTransferHookAccounts } from "./internal/transferHook";
 import type { ConfidentialKeypairs } from "./keys";
@@ -69,6 +70,22 @@ export type TransferInput = SendOptions & {
    * given (since 3.3.0), so it is only needed to override that.
    */
   auditorElgamalPubkey?: Address;
+  /**
+   * The recipient's ElGamal key as the application knows it (from its own records of the recipient,
+   * not from this RPC). When given, the transfer is refused (RECIPIENT_KEY_MISMATCH) before anything
+   * is encrypted or signed if the RPC reports another key for the recipient's account: an RPC that
+   * substituted its own key would otherwise receive the amount encrypted to that key.
+   */
+  destinationElgamalPubkey?: Address;
+  /**
+   * Spend what is pending too (default `true`): when incoming transfers or deposits wait in the
+   * pending balance, the one-transaction transfer applies them first, in the same transaction, so
+   * the recipient of earlier payments never has to call applyPendingBalance. If another credit lands
+   * while the transaction is on its way, Token-2022 refuses it as a whole and the call builds it
+   * again (up to three times). With proof accounts (`singleTransaction: false`, or a transaction too
+   * large) only the available balance is spent.
+   */
+  applyPending?: boolean;
   /** The owner's keys from {@link deriveConfidentialKeys}; skips the message signature. */
   keys?: ConfidentialKeypairs;
   /** Token program. Default: Token-2022. */
@@ -133,7 +150,7 @@ export async function transfer(input: TransferInput): Promise<TransferResult> {
   const destination = destinationToken;
 
   let keys = input.keys;
-  const result = await withRetries(input.retries, async () => {
+  const result = await withRetries(input.retries, () => retryWhilePendingChanges(async () => {
     const [source, dest, mint] = await Promise.all([
       readConfiguredAccount(input.rpc, sourceToken, operation, "your"),
       readConfiguredAccount(input.rpc, destination, operation, "the recipient's"),
@@ -149,6 +166,15 @@ export async function transfer(input: TransferInput): Promise<TransferResult> {
         "INVALID_INPUT",
         `${operation}: destinationToken ${destination} belongs to ${dest.data.owner}, not to destinationOwner ` +
           `${input.destinationOwner}. Pass only one of them, or both for the same recipient.`,
+        { operation },
+      );
+    }
+    if (input.destinationElgamalPubkey != null && dest.ct.elgamalPubkey !== input.destinationElgamalPubkey) {
+      throw new ConfidentialTransfersError(
+        "RECIPIENT_KEY_MISMATCH",
+        `${operation}: the RPC reports ElGamal key ${dest.ct.elgamalPubkey} for the recipient's account ${destination}, ` +
+          `not the pinned ${input.destinationElgamalPubkey}. Nothing was encrypted or signed. Check the RPC, or the ` +
+          "recipient's key if the recipient set up a new account.",
         { operation },
       );
     }
@@ -191,15 +217,16 @@ export async function transfer(input: TransferInput): Promise<TransferResult> {
     };
     const ctx = { rpc: input.rpc, rpcSubscriptions: input.rpcSubscriptions, payer: input.payer, operation, computeUnitPrice: input.computeUnitPrice };
     if (input.singleTransaction !== false) {
+      const applied = input.applyPending === false ? undefined : pendingToApply(source.ct, keys, sourceToken, operation);
       const sent = await sendSingleTransaction(
         ctx,
-        await getConfidentialTransferInlineInstructions(proofInput),
+        await getConfidentialTransferInlineInstructions({ ...proofInput, applied }),
         transferHookAccounts.map((account) => account.address),
       );
       if (sent) return sent;
     }
     return executeProofFlow(ctx, await getConfidentialTransferProofFlow(proofInput), operation);
-  });
+  }));
 
   return { sourceToken, destinationToken: destination, ...result };
 }
@@ -208,3 +235,4 @@ function auditorKeyOf(mint: Parameters<typeof mintExtension>[0]): Address | unde
   const ct = mintExtension(mint, "ConfidentialTransferMint");
   return ct && isSome(ct.auditorElgamalPubkey) ? ct.auditorElgamalPubkey.value : undefined;
 }
+

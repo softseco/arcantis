@@ -10,6 +10,57 @@ This repository holds Arcantis: the TypeScript package `@softseco/arcantis` and 
 the two were released together under one version, and from 2.1.0 each had its own versions: the
 TypeScript package tagged `vX.Y.Z`, the Rust crate `rust-vX.Y.Z` (entries headed `rust-X.Y.Z`).
 
+## [Unreleased]
+
+The pending balance applied where it is spent, an apply that cannot leave the balance copies apart,
+a pinned recipient key and closing an account, in both the TypeScript package and the Rust crate
+(closing an account: TypeScript). Self-audited, not independently audited.
+
+### Added
+
+- **What is pending can be spent at once.** A one-transaction `transfer` or `withdraw` applies the
+  pending balance first, in the same transaction, and builds its proofs from the balance after it,
+  computed with Token-2022's own arithmetic (`add_with_lo_hi`). A recipient of earlier payments no
+  longer has to call `applyPendingBalance` before spending them. Option `applyPending` (TypeScript,
+  default `true`) and `with_apply_pending` (Rust). With proof accounts (the fallback) only the
+  available balance is spent, as before.
+- **A checked apply.** `applyPendingBalance` / `apply_pending_balance` sends the apply with a
+  withdraw of zero in the same v1 transaction, whose proof is about the exact balance the apply
+  should leave. A deposit or transfer that lands between reading the account and the transaction
+  makes Token-2022 refuse both (`ConfidentialTransferBalanceMismatch`, 0x1b) instead of leaving
+  the AES copy behind; the call reads the account again, up to three times in all. About 130,000
+  compute units more. Option `verify` (TypeScript) and `with_checked_apply` (Rust), default on; a
+  frozen account or a paused mint gets the plain apply. Threat model: known limit 3, invariant 7,
+  change of 6 November.
+- **A pinned recipient key.** `transfer({ destinationElgamalPubkey })` (TypeScript) and
+  `transfer_to_known_key` (Rust) refuse the transfer, before anything is encrypted or signed, when
+  the RPC reports another ElGamal key for the recipient's account (`RECIPIENT_KEY_MISMATCH`, new
+  code in both). Threat model: known limit 12.
+- `decryptBalance({ includePending: true })` (TypeScript) and `decrypt_balance_with_pending`
+  (Rust): available plus pending, which is what a transfer or withdraw can now spend.
+- `closeAccount` (TypeScript): closes an emptied confidential account and returns its rent
+  deposit, in one transaction (an apply if anything is pending, a zero-ciphertext proof,
+  `EmptyAccount`, `CloseAccount`). Refused while the account holds a public or confidential
+  balance, or is frozen.
+
+### Changed
+
+- `listConfidentialActivity` and `arcantis audit-report` leave out withdraws of zero, which move
+  nothing (the checked apply sends one).
+- Rust: the crate depends directly on `spl-token-confidential-transfer-ciphertext-arithmetic`
+  0.5.1, the version `spl-token-2022` 11.0.0 already uses.
+
+### Tests
+
+- TypeScript `test/pending.test.ts`: a checked apply built before a credit lands is refused by
+  Token-2022 and changes nothing; a transfer of more than the available balance spends the pending
+  part in one transaction; a withdraw from what is pending; `applyPending: false` keeps the old
+  rule; a wrong pinned key is refused and the right one goes through; `closeAccount` refuses a
+  funded account and closes an emptied one, returning its rent.
+- Rust `spends_what_is_pending_checks_its_apply_and_pins_the_recipient_key`: the transfer's
+  transaction holds the apply and then the transfer; the checked apply calls the ZK program and the
+  plain one does not; the copies agree after each step; the pinned key.
+
 ## [1.0.0-rc.2] - 2026-11-05
 
 The Rust crate's transfers and withdrawals in one transaction, as in the TypeScript package. Both

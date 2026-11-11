@@ -29,6 +29,11 @@ export type ConfidentialTransfersErrorCode =
   | "AMOUNT_TOO_LARGE"
   /** The keys passed are not the keys the account is configured with. */
   | "KEYS_MISMATCH"
+  /**
+   * The recipient's ElGamal key, as the RPC returned it, is not the one the caller pinned with
+   * `destinationElgamalPubkey`. Nothing was encrypted to it or signed.
+   */
+  | "RECIPIENT_KEY_MISMATCH"
   /** A balance could not be decrypted (wrong keys, or a pending total beyond what can be decrypted). */
   | "DECRYPTION_FAILED"
   /**

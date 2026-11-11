@@ -8,8 +8,8 @@
 // v1 transaction. With `singleTransaction: false`, or when that does not fit, each
 // is verified into a context-state account, the withdraw runs, and the proof
 // accounts are closed; those transactions are signed together and sent in order
-// (see internal/send.ts). Apply the pending balance first: only the available
-// balance can be withdrawn.
+// (see internal/send.ts). In one transaction, what is pending is applied first and
+// can be withdrawn too; with proof accounts only the available balance can.
 import {
   type Address,
   type Rpc,
@@ -25,6 +25,7 @@ import { ConfidentialTransfersError } from "./errors";
 import { assertMintAllows, assertNotFrozen, readConfiguredAccount, readMint } from "./internal/accounts";
 import { getConfidentialWithdrawInlineInstructions, getConfidentialWithdrawProofFlow } from "./internal/confidentialTransferProof";
 import { assertKeysMatchAccount, ownerKeys } from "./internal/ownerKeys";
+import { pendingToApply, retryWhilePendingChanges } from "./internal/pendingBalance";
 import { executeProofFlow, sendSingleTransaction, withRetries, type SendOptions } from "./internal/send";
 import type { ConfidentialKeypairs } from "./keys";
 
@@ -57,6 +58,12 @@ export type WithdrawInput = SendOptions & {
    * too large.
    */
   singleTransaction?: boolean;
+  /**
+   * Withdraw from what is pending too (default `true`): the one-transaction withdraw applies the
+   * pending balance first, in the same transaction, as transfer() does. With proof accounts only
+   * the available balance can be withdrawn.
+   */
+  applyPending?: boolean;
 };
 
 export type WithdrawResult = {
@@ -87,8 +94,8 @@ export async function withdraw(input: WithdrawInput): Promise<WithdrawResult> {
     (await findAssociatedTokenPda({ owner: input.owner.address, tokenProgram: programAddress, mint: input.mint }))[0];
 
   let keys = input.keys;
-  const result = await withRetries(input.retries, async () => {
-    const [{ data }, mint] = await Promise.all([
+  const result = await withRetries(input.retries, () => retryWhilePendingChanges(async () => {
+    const [{ data, ct }, mint] = await Promise.all([
       readConfiguredAccount(input.rpc, token, operation, "your"),
       readMint(input.rpc, input.mint, operation),
     ]);
@@ -113,11 +120,12 @@ export async function withdraw(input: WithdrawInput): Promise<WithdrawResult> {
     };
     const ctx = { rpc: input.rpc, rpcSubscriptions: input.rpcSubscriptions, payer: input.payer, operation, computeUnitPrice: input.computeUnitPrice };
     if (input.singleTransaction !== false) {
-      const sent = await sendSingleTransaction(ctx, await getConfidentialWithdrawInlineInstructions(proofInput));
+      const applied = input.applyPending === false ? undefined : pendingToApply(ct, keys, token, operation);
+      const sent = await sendSingleTransaction(ctx, await getConfidentialWithdrawInlineInstructions({ ...proofInput, applied }));
       if (sent) return sent;
     }
     return executeProofFlow(ctx, await getConfidentialWithdrawProofFlow(proofInput), operation);
-  });
+  }));
 
   return { token, ...result };
 }

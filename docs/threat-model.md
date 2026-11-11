@@ -104,7 +104,12 @@ and `rust/tests/` and the `#[cfg(test)]` modules of `rust/src/` (Rust).
    checked against the ElGamal balance each time it is read; when it has fallen behind (finding 1
    below), the missing amount is recovered and the next transfer, withdrawal or apply writes a
    correct copy. A copy that cannot be reconciled is `BALANCE_OUT_OF_SYNC`, and nothing is
-   signed. (`availableBalance.test.ts`; `accounts::tests`,
+   signed. Since the change of 6 November, an apply never travels alone: it goes in the same
+   transaction as a transfer, a withdrawal, or (in `applyPendingBalance`) a withdraw of zero, whose
+   proof is about the exact ElGamal balance the apply leaves, computed with Token-2022's
+   `add_with_lo_hi`. A credit that lands in between makes Token-2022 refuse the whole transaction,
+   so the SDKs no longer create the drift that finding 1 repairs. (`pending.test.ts`;
+   `spends_what_is_pending_checks_its_apply_and_pins_the_recipient_key`) (`availableBalance.test.ts`; `accounts::tests`,
    `repairs_an_aes_copy_left_behind_by_a_credit_during_an_apply`)
 8. **Proofs travel inside the transfer, or in temporary accounts.** A transfer or withdrawal is
    one v1 transaction (up to 4,096 bytes) in both SDKs: the proof-verification instructions sit
@@ -175,7 +180,10 @@ and `rust/tests/` and the `#[cfg(test)]` modules of `rust/src/` (Rust).
    an account configured with one set could later only be used with that same set. Arcantis
    catches a mismatch on every later call (`KEYS_MISMATCH`), but cannot tell at configuration
    time. Passing the same `keys` object to every call avoids it within a session.
-3. **A balance copy that fell behind by 2^32 base units or more.** The recovery in invariant 7
+3. **A balance copy that fell behind by 2^32 base units or more.** Since the change of 6 November
+   the SDKs' own applies cannot leave a copy behind (invariant 7); a plain apply sent by another
+   client, or by these SDKs with the check turned off (`verify: false`, `with_checked_apply(false)`,
+   or without v1 transactions), still can. The recovery in invariant 7
    decrypts the missing amount with a 32-bit discrete log. If the credits that raced an apply add
    up to 2^32 base units or more (4,294.97 units of a 6-decimal token), the call fails with
    `BALANCE_OUT_OF_SYNC`. The funds are in the encrypted balance; repairing the copy then needs
@@ -220,7 +228,10 @@ and `rust/tests/` and the `#[cfg(test)]` modules of `rust/src/` (Rust).
     keys are read from the RPC. An RPC that substitutes its own key receives the transaction that
     carries the amount encrypted to that key (with proof accounts, the proof transactions that go
     out before the transfer). Token-2022 then refuses the transfer, but the amount has leaked. Use an RPC you trust for transfers; the
-    auditor key can be pinned (`auditorElgamalPubkey`), the destination key cannot yet.
+    auditor key can be pinned (`auditorElgamalPubkey`), and since the change of 6 November so can the
+    destination key (`destinationElgamalPubkey`, `transfer_to_known_key`): a different key from
+    the RPC is then `RECIPIENT_KEY_MISMATCH`, before anything is encrypted. Without a pinned key the
+    limit stands.
 13. **Unverified range-proof accounts.** In Rust the range-proof context account is created in one
     transaction and verified in the next, because the two do not fit in one. Anyone can verify a
     proof of their own into it in between, take it over and close it to themselves: the transfer
@@ -265,6 +276,13 @@ finding reproduced before it was fixed.
 | # | Finding | Effect | Status |
 |---|---|---|---|
 | 17 | A transfer took five transactions and a withdrawal four, sent one after another, each waiting for its confirmation. Solana has taken v1 transactions of up to 4,096 bytes since 15 September 2026, and Token-2022 can read proofs from earlier instructions of the same transaction. | Several seconds per payment on mainnet; rent held in proof accounts while they were open; more steps that can fail (findings 7 and 11, known limit 13). | Changed in TypeScript: one v1 transaction by default, proof accounts as the fallback (invariant 8). The auditor's reads ask the RPC for v1 transactions, without which a v1 transfer could not be read (invariant 12). Measured on a local validator with Vigilantis as the hook: 2,690 bytes, 14 accounts, about 280,000 compute units. Rust followed in the crate's 1.0.0-rc.2, with the message built by `solana-message` 6 (the pinned client crates predate v1): the same 2,690 bytes and 14 accounts through Sentinel. |
+
+## Change of 6 November 2026
+
+| # | Finding | Effect | Status |
+|---|---|---|---|
+| 18 | An apply sent on its own writes the AES copy the owner computed beforehand, while Token-2022 adds everything pending when it runs. A credit landing in between left the copy behind; the recovery of finding 1 finds the difference only below 2^32 base units (4,294.97 units of a 6-decimal token), which a business receiving large payments can exceed. | An account unusable through the SDKs until repaired; no funds at risk. | Changed in both SDKs: `transfer` and `withdraw` apply what is pending in their own transaction, and `applyPendingBalance` adds a withdraw of zero, so a credit landing meanwhile makes Token-2022 refuse the whole transaction (0x1b) and the call builds it again, up to three times (invariant 7, known limit 3). A withdraw of zero is allowed by Token-2022 (it skips the arithmetic and still checks the balance against the proof) and is left out of the auditor's report. |
+| 19 | The destination's ElGamal key came only from the RPC (known limit 12). | An RPC that substitutes its own key learns the amount. | A caller that knows the recipient's key can pin it (`destinationElgamalPubkey`, `transfer_to_known_key`). |
 
 ## How the invariants are tested
 

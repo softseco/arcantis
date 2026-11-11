@@ -66,10 +66,11 @@ about 0.01 SOL, almost all of it rent that stays with the test mint and the two 
 
 - **`configureAccount`** enables a Token-2022 account for confidential transfers (with the PubkeyValidity ZK proof)
 - **`deposit`** moves tokens from the public balance into the confidential **pending** balance
-- **`applyPendingBalance`** rolls the pending balance into the spendable **available** balance
-- **`decryptBalance`** decrypts your own available balance locally (read-only)
+- **`applyPendingBalance`** rolls the pending balance into the **available** balance, checked so that a payment arriving at the same moment cannot leave the account's balance copies apart; `transfer` and `withdraw` do this by themselves
+- **`decryptBalance`** decrypts your own available balance locally (read-only), with what is pending if you ask (`includePending`)
 - **`transfer`** sends an encrypted amount to another account in one transaction, its three proofs (equality, ciphertext-validity, range) inside
-- **`withdraw`** moves tokens from the confidential available balance back to the public balance, also in one transaction (equality and range proofs)
+- **`withdraw`** moves tokens from the confidential balance back to the public balance, also in one transaction (equality and range proofs)
+- **`closeAccount`** closes an emptied account and returns its rent deposit
 - **Transfer-hook mints**: `transfer` resolves the mint's transfer-hook accounts, so confidential transfers work on mints that enforce rules through a hook
 - **Auditor selective disclosure**: derive an auditor ElGamal identity and recover transfer amounts on an auditor-enabled mint, without the power to spend
 - **Built for real use**: a transfer is one v1 transaction (up to 4,096 bytes, accepted by Solana since September 2026), so it confirms like any other payment; the fee payer can be a relayer, so the sender needs no SOL. For a wallet that cannot sign v1 transactions, `singleTransaction: false` sends the proofs through proof accounts instead: five transactions signed together (a wallet asks once), closed again if a step fails, and `recoverProofAccounts` cleans up after a process that stopped. Priority fees, retries on expiry, and typed errors (`ConfidentialTransfersError` with a `code`) for every case the SDK checks
@@ -108,13 +109,10 @@ const { token } = await configureAccount({ rpc, rpcSubscriptions, payer, owner: 
 // 2. move 1000 public tokens into Alice's confidential pending balance
 await deposit({ rpc, rpcSubscriptions, payer, owner: alice, mint, amount: 1000n, decimals });
 
-// 3. roll pending -> available
-await applyPendingBalance({ rpc, rpcSubscriptions, payer, owner: alice, mint });
+// 3. read your own balance (decrypted locally; nothing is revealed on-chain)
+const balance = await decryptBalance({ rpc, owner: alice, mint, includePending: true }); // 1000n
 
-// 4. read your own balance (decrypted locally; nothing is revealed on-chain)
-const balance = await decryptBalance({ rpc, owner: alice, mint }); // 1000n
-
-// 5. privately transfer 600 to Bob
+// 4. privately transfer 600 to Bob: what is pending is applied in the same transaction
 await transfer({
   rpc,
   rpcSubscriptions,
@@ -125,13 +123,20 @@ await transfer({
   amount: 600n,
 });
 
-// 6. move 400 of Alice's confidential balance back to her public balance
+// 5. move 400 of Alice's confidential balance back to her public balance
 await withdraw({ rpc, rpcSubscriptions, payer, owner: alice, mint, amount: 400n, decimals });
 ```
 
-Only the available balance can be transferred or withdrawn, so call `applyPendingBalance` after
-receiving funds. A withdrawn amount is public (it is an instruction argument); the balance that
-remains stays encrypted.
+Incoming amounts land in the pending balance. A one-transaction `transfer` or `withdraw` applies
+them first, in the same transaction, so there is no separate step after receiving funds; if
+another payment lands while that transaction is on its way, Token-2022 refuses it as a whole and
+the call builds it again. With proof accounts (`singleTransaction: false`) only the available
+balance can be spent, and `applyPendingBalance` comes first. A withdrawn amount is public (it is an
+instruction argument); the balance that remains stays encrypted.
+
+To send only to the key you expect, pass the recipient's ElGamal key from your own records as
+`destinationElgamalPubkey`: the transfer is refused (`RECIPIENT_KEY_MISMATCH`) before anything is
+encrypted if the RPC reports another one.
 
 Runnable round trips: [`examples/devnet.ts`](./examples/devnet.ts) (`npm run example:devnet`) and
 [`examples/confidential-transfer.ts`](./examples/confidential-transfer.ts) (`npm run example`,
@@ -225,10 +230,11 @@ See the [guide for auditors](./guides/auditors.md).
 |---|---|---|
 | `configureAccount` | Configure a Token-2022 account for CT | `rpc`, `rpcSubscriptions`, `payer`, `owner`, `mint` → `{ token, signature }` |
 | `deposit` | Public balance → confidential pending | `…`, `amount`, `decimals` → `{ token, signature }` |
-| `applyPendingBalance` | Pending → available | `rpc`, `rpcSubscriptions`, `payer`, `owner`, `mint` → `{ token, signature }` |
-| `decryptBalance` | Decrypt your available balance (read-only) | `rpc`, `owner`, `mint` → `bigint` |
-| `transfer` | Private transfer between accounts | `…`, `owner`, `mint`, `destinationOwner` (or `destinationToken`), `amount`, optional `auditorElgamalPubkey` → `{ sourceToken, destinationToken, signatures }` |
-| `withdraw` | Confidential available → public balance | `…`, `owner`, `mint`, `amount`, `decimals` → `{ token, signatures }` |
+| `applyPendingBalance` | Pending → available, checked by a withdraw of zero in the same transaction | `rpc`, `rpcSubscriptions`, `payer`, `owner`, `mint`, optional `verify` → `{ token, signature }` |
+| `decryptBalance` | Decrypt your available balance (read-only) | `rpc`, `owner`, `mint`, optional `includePending` → `bigint` |
+| `transfer` | Private transfer between accounts, spending what is pending too | `…`, `owner`, `mint`, `destinationOwner` (or `destinationToken`), `amount`, optional `auditorElgamalPubkey`, `destinationElgamalPubkey`, `applyPending` → `{ sourceToken, destinationToken, signatures }` |
+| `withdraw` | Confidential → public balance, spending what is pending too | `…`, `owner`, `mint`, `amount`, `decimals`, optional `applyPending` → `{ token, signatures }` |
+| `closeAccount` | Close an emptied account, rent back | `…`, `owner`, `mint`, optional `destination` → `{ token, signature }` |
 | `deriveAuditorElgamalKeypair` | Derive the auditor's ElGamal keypair from its wallet | `signer` → `ElGamalKeypair` |
 | `getAuditorElgamalPubkey` | Auditor pubkey for a mint's CT config | `auditorKeypair` → `Address` |
 | `decryptTransferAmountAsAuditor` | Recover a transfer's amount as the auditor | `rpc`, `signature`, `auditorKeypair`, optional `mint` → `bigint` |
@@ -271,8 +277,7 @@ cargo add arcantis
 let client = ConfidentialClient::new(rpc, Arc::new(payer));
 client.configure_account(&alice, &mint).await?;
 client.deposit(&alice, &mint, 1_000).await?;
-client.apply_pending_balance(&alice, &mint).await?;
-client.transfer(&alice, &mint, &bob, 400).await?;
+client.transfer(&alice, &mint, &bob, 400).await?; // applies what is pending first
 client.withdraw(&alice, &mint, 100).await?;
 ```
 

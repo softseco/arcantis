@@ -16,7 +16,7 @@
 <div class="tsd-signature tsd-anchor-link" id="decryptbalance"><span class="tsd-kind-call-signature">decryptBalance</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">input</span><span class="tsd-signature-symbol">:</span> <a href="../types/DecryptBalanceInput.html" class="tsd-signature-type tsd-kind-type-alias">DecryptBalanceInput</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">bigint</span><span class="tsd-signature-symbol">&gt;</span><a href="#decryptbalance" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The owner's confidential available balance in base units, decrypted locally. Sends no
-transaction. Amounts still pending are not included until <a href="applyPendingBalance.html" class="tsd-kind-function">applyPendingBalance</a>.</p>
+transaction. Amounts still pending are left out unless <code>includePending</code> is set.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -24,7 +24,7 @@ transaction. Amounts still pending are not included until <a href="applyPendingB
 <li><span><span class="tsd-kind-parameter">input</span>: <a href="../types/DecryptBalanceInput.html" class="tsd-signature-type tsd-kind-type-alias">DecryptBalanceInput</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">bigint</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/softseco/arcantis/blob/main/src/decryptBalance.ts#L41">src/decryptBalance.ts:41</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/softseco/arcantis/blob/main/src/decryptBalance.ts#L47">src/decryptBalance.ts:47</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

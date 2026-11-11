@@ -37,6 +37,9 @@ pub enum ErrorCode {
     AmountTooLarge,
     /// The keys are not the keys the account is configured with.
     KeysMismatch,
+    /// The recipient's ElGamal key, as the RPC returned it, is not the one the caller pinned
+    /// (`transfer_to_known_key`). Nothing was encrypted to it or signed.
+    RecipientKeyMismatch,
     /// A balance could not be decrypted.
     DecryptionFailed,
     /// The AES copy of the available balance has fallen behind the encrypted balance by more than
@@ -72,6 +75,7 @@ impl ErrorCode {
             Self::InsufficientFunds => "INSUFFICIENT_FUNDS",
             Self::AmountTooLarge => "AMOUNT_TOO_LARGE",
             Self::KeysMismatch => "KEYS_MISMATCH",
+            Self::RecipientKeyMismatch => "RECIPIENT_KEY_MISMATCH",
             Self::DecryptionFailed => "DECRYPTION_FAILED",
             Self::BalanceOutOfSync => "BALANCE_OUT_OF_SYNC",
             Self::UnsupportedFormat => "UNSUPPORTED_FORMAT",

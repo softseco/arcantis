@@ -47,6 +47,9 @@ spl-token-2022 = { version = "=11.0.0", features = ["no-entrypoint"] }
 # solana-remote-wallet, hidapi and libusb). Only `zk_proofs` is used, which needs no feature.
 spl-token-client = { version = "=0.19.1", default-features = false }
 spl-token-confidential-transfer-proof-generation = "=0.6.1"
+# The same version spl-token-2022 11.0.0 uses: the apply's arithmetic (add_with_lo_hi), so that the
+# balance a transfer's proof is about is the very ciphertext Token-2022 computes.
+spl-token-confidential-transfer-ciphertext-arithmetic = "=0.5.1"
 # The same versions spl-token-client 0.19.1 resolves to, used directly since 3.0.0 to build the
 # instructions and send the transactions (priority fee, simulation, proof-account cleanup).
 spl-token-2022-interface = "=3.1.1"

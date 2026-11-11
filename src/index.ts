@@ -41,6 +41,8 @@ export { transfer } from "./transfer";
 export type { TransferInput, TransferResult } from "./transfer";
 export { withdraw } from "./withdraw";
 export type { WithdrawInput, WithdrawResult } from "./withdraw";
+export { closeAccount } from "./closeAccount";
+export type { CloseAccountInput, CloseAccountResult } from "./closeAccount";
 export {
   decryptTransferAmountAsAuditor,
   deriveAuditorElgamalKeypair,

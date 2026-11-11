@@ -15,6 +15,7 @@ import { TOKEN_2022_PROGRAM_ADDRESS, findAssociatedTokenPda } from "@solana-prog
 import { readConfiguredAccount } from "./internal/accounts";
 import { readAvailableBalance } from "./internal/availableBalance";
 import { assertKeysMatchAccount, ownerKeys } from "./internal/ownerKeys";
+import { decryptPendingBalance } from "./internal/pendingBalance";
 import type { ConfidentialKeypairs } from "./keys";
 
 export type DecryptBalanceInput = {
@@ -32,11 +33,16 @@ export type DecryptBalanceInput = {
   keys?: ConfidentialKeypairs;
   /** Token program. Default: Token-2022. */
   programAddress?: Address;
+  /**
+   * Add what is pending (default `false`). transfer() and withdraw() spend pending amounts too, so
+   * a wallet shows this sum as the spendable balance.
+   */
+  includePending?: boolean;
 };
 
 /**
  * The owner's confidential available balance in base units, decrypted locally. Sends no
- * transaction. Amounts still pending are not included until {@link applyPendingBalance}.
+ * transaction. Amounts still pending are left out unless `includePending` is set.
  */
 export async function decryptBalance(input: DecryptBalanceInput): Promise<bigint> {
   const programAddress = input.programAddress ?? TOKEN_2022_PROGRAM_ADDRESS;
@@ -56,5 +62,6 @@ export async function decryptBalance(input: DecryptBalanceInput): Promise<bigint
   const keys = await ownerKeys(input.owner, input.keys, operation);
   assertKeysMatchAccount(keys, data, token, operation);
 
-  return readAvailableBalance(ct, keys, token, operation);
+  const available = readAvailableBalance(ct, keys, token, operation);
+  return input.includePending ? available + decryptPendingBalance(ct, keys, token, operation) : available;
 }

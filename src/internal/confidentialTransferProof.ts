@@ -54,6 +54,7 @@ import {
 
 import { ConfidentialTransfersError } from "../errors";
 import { readAvailableBalance } from "./availableBalance";
+import { getApplyInstruction, type AppliedBalance } from "./pendingBalance";
 import {
   extractCiphertextFromGroupedBytes,
   subtractAmountFromCiphertext,
@@ -97,6 +98,11 @@ export type GetConfidentialTransferInstructionPlanInput = {
   payer: TransactionSigner;
   rpc: Rpc<GetMinimumBalanceForRentExemptionApi>;
   proofMode?: "context-state";
+  /**
+   * Apply the pending balance in the same transaction, right before the transfer, and build the
+   * proofs from the balance after it (internal/pendingBalance.ts). One-transaction transfers only.
+   */
+  applied?: AppliedBalance;
 } & (
   | { destinationTokenAccount: Token; destinationElgamalPubkey?: Address }
   | { destinationElgamalPubkey: Address; destinationTokenAccount?: never }
@@ -310,19 +316,21 @@ async function buildTransferProofs(input: GetConfidentialTransferInstructionPlan
   const transferAmountAuditorCiphertextHi = extractCiphertextFromGroupedBytes(groupedCiphertextHiBytes, 2);
 
   const newAvailableBalance = computeNewAvailableBalance(
-    readAvailableBalance(
-      sourceAccount,
-      { elgamalKeypair: input.sourceElgamalKeypair, aesKey: input.aesKey },
-      input.sourceToken,
-      "transfer",
-    ),
+    input.applied
+      ? input.applied.value
+      : readAvailableBalance(
+          sourceAccount,
+          { elgamalKeypair: input.sourceElgamalKeypair, aesKey: input.aesKey },
+          input.sourceToken,
+          "transfer",
+        ),
     amount,
   );
   const newAvailableBalanceOpening = new PedersenOpening();
   const newAvailableBalanceCommitment = PedersenCommitment.from(newAvailableBalance, newAvailableBalanceOpening);
   const newAvailableBalanceCiphertext = parseElGamalCiphertext(
     subtractWithLoHiCiphertexts(
-      sourceAccount.availableBalance,
+      input.applied ? input.applied.availableBalance : sourceAccount.availableBalance,
       transferAmountSourceCiphertextLo,
       transferAmountSourceCiphertextHi,
       TRANSFER_AMOUNT_LO_BIT_LENGTH,
@@ -409,13 +417,19 @@ export async function getConfidentialTransferInlineInstructions(
     ),
     input.transferHookAccounts,
   );
-  return [equality, ciphertextValidity, range, transfer];
+  // The apply goes first; the transfer still finds its proofs at -3, -2, -1.
+  const apply = input.applied
+    ? [getApplyInstruction(input.sourceToken, input.authority, input.applied, input.programAddress ?? TOKEN_2022_PROGRAM_ADDRESS, input.multiSigners)]
+    : [];
+  return [...apply, equality, ciphertextValidity, range, transfer];
 }
 
 export async function getConfidentialTransferProofFlow(
   input: GetConfidentialTransferInstructionPlanInput,
 ): Promise<ProofFlow> {
-  const proofs = await buildTransferProofs(input);
+  // The proof accounts are verified in earlier transactions; an apply in between would be applied
+  // without being checked against them, so this flow works from the available balance alone.
+  const proofs = await buildTransferProofs({ ...input, applied: undefined });
   const [equalityProofPlan, ciphertextValidityProofPlan, rangeProofPlan] = await Promise.all([
     buildContextStateProofPlan(proofs.equality, verifyCiphertextCommitmentEquality, input.payer, input.rpc),
     buildContextStateProofPlan(
@@ -476,6 +490,13 @@ export type GetConfidentialWithdrawInstructionPlanInput = {
   programAddress?: Address;
   payer: TransactionSigner;
   rpc: Rpc<GetMinimumBalanceForRentExemptionApi>;
+  /** As for transfers: apply the pending balance first, in the same transaction. */
+  applied?: AppliedBalance;
+  /**
+   * Allow an amount of zero: a withdraw that moves nothing but proves the balance it starts from,
+   * which applyPendingBalance uses to check its own apply.
+   */
+  allowZero?: boolean;
 };
 
 /**
@@ -502,18 +523,21 @@ type WithdrawProofs = {
 async function buildWithdrawProofs(input: GetConfidentialWithdrawInstructionPlanInput): Promise<WithdrawProofs> {
   const account = getRequiredConfidentialTransferAccountExtension(input.tokenAccount);
   const amount = BigInt(input.amount);
-  if (amount <= 0n) {
+  if (amount < 0n || (amount === 0n && !input.allowZero)) {
     throw new ConfidentialTransfersError("INVALID_INPUT", `withdraw amount must be greater than zero, got ${amount}`);
   }
   const newAvailableBalance = computeNewAvailableBalance(
-    readAvailableBalance(account, { elgamalKeypair: input.elgamalKeypair, aesKey: input.aesKey }, input.token, "withdraw"),
+    input.applied
+      ? input.applied.value
+      : readAvailableBalance(account, { elgamalKeypair: input.elgamalKeypair, aesKey: input.aesKey }, input.token, "withdraw"),
     amount,
   );
 
+  const startingBalance = input.applied ? input.applied.availableBalance : account.availableBalance;
   const remainingBalanceOpening = new PedersenOpening();
   const remainingBalanceCommitment = PedersenCommitment.from(newAvailableBalance, remainingBalanceOpening);
   const remainingBalanceCiphertext = parseElGamalCiphertext(
-    subtractAmountFromCiphertext(account.availableBalance, amount),
+    amount === 0n ? new Uint8Array(startingBalance) : subtractAmountFromCiphertext(startingBalance, amount),
   );
 
   const equalityProofData = new CiphertextCommitmentEqualityProofData(
@@ -566,13 +590,16 @@ export async function getConfidentialWithdrawInlineInstructions(
     },
     { programAddress: input.programAddress ?? TOKEN_2022_PROGRAM_ADDRESS },
   );
-  return [equality, range, withdraw];
+  const apply = input.applied
+    ? [getApplyInstruction(input.token, input.authority, input.applied, input.programAddress ?? TOKEN_2022_PROGRAM_ADDRESS, input.multiSigners)]
+    : [];
+  return [...apply, equality, range, withdraw];
 }
 
 export async function getConfidentialWithdrawProofFlow(
   input: GetConfidentialWithdrawInstructionPlanInput,
 ): Promise<ProofFlow> {
-  const proofs = await buildWithdrawProofs(input);
+  const proofs = await buildWithdrawProofs({ ...input, applied: undefined });
   const [equalityProofPlan, rangeProofPlan] = await Promise.all([
     buildContextStateProofPlan(proofs.equality, verifyCiphertextCommitmentEquality, input.payer, input.rpc),
     buildContextStateProofPlan(proofs.range, verifyBatchedRangeProofU64, input.payer, input.rpc),
